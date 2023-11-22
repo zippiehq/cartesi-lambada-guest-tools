@@ -236,7 +236,7 @@ pub async fn ipfs_put_request(
 pub async fn ipfs_get_request(
     rollup_http_server_addr: &str,
     cid: &str
-) -> Result<(), std::io::Error>{
+) -> Result<Vec<u8>, std::io::Error>{
     {
         let client = hyper::Client::new();
         let req = hyper::Request::builder()
@@ -248,12 +248,18 @@ pub async fn ipfs_get_request(
         match client.request(req).await {
             Ok(res) => {
                 if !res.status().is_success() {
-                    return Err(std::io::Error::new(ErrorKind::Other, "failed to get data from ipfs"));
+                    return Err(std::io::Error::new(ErrorKind::Other, format!("failed to get data from ipfs satus {:?}", res.status())));
                 }
+
+                let response = hyper::body::to_bytes(res)
+                .await
+                .expect("error get output")
+                .to_vec();
+                return Ok(response)
             },
             _ => {}
         }
-        Ok(())
+        return Err(std::io::Error::new(ErrorKind::Other, "failed to get data from ipfs"));
     }
 }
 
@@ -264,8 +270,7 @@ pub async fn ipfs_has_request(
     {
         let client = hyper::Client::new();
         let req = hyper::Request::builder()
-            .method(hyper::Method::GET)
-            .header(hyper::header::CONTENT_TYPE, "application/octet-stream")
+            .method(hyper::Method::HEAD)
             .uri(rollup_http_server_addr.to_string() + "/ipfs/has/"+cid)
             .body(hyper::Body::empty())
             .expect("ipfs has request");

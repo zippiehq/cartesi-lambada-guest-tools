@@ -28,7 +28,7 @@ use crate::rollup::{
     AdvanceRequest, Exception, InspectRequest, Notice, Report, RollupRequest, Voucher
 };
 use std::fs::File;
-use std::io::Write;
+use std::io::{Write, Read};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "request_type")]
@@ -77,20 +77,36 @@ pub async fn run(
 
 #[actix_web::put("/ipfs/put/{cid}")]
 async fn ipfs_put(content: Bytes, cid: web::Path<String>) -> HttpResponse {
-    let mut file = File::create(cid.into_inner()).expect("Failed to create file");
+    let mut file = File::create(&(std::env::var("CACHE_DIR").unwrap() + &cid.into_inner())).expect("Failed to create file");
     file.write_all(&content.to_vec())
         .expect("Failed to write to file");
-    HttpResponse::BadRequest().body("failed to put data to ipfs")
+    HttpResponse::Ok().finish()
 }
 
 #[actix_web::get("/ipfs/get/{cid}")]
 async fn ipfs_get(cid: web::Path<String>) -> HttpResponse {
-    HttpResponse::BadRequest().body("failed to get data from ipfs")
+    match File::open(&(std::env::var("CACHE_DIR").unwrap() + &cid.into_inner()))
+    {
+        Ok(mut file) => {
+            let mut response = vec![];
+            match file.read_to_end(&mut response) {
+                Ok(_) => {
+                    HttpResponse::Ok().json(response)
+                },
+                Err(err) => {
+                    HttpResponse::BadRequest().body(format!("failed to get data: {:?}", err))
+                },
+            }
+        },
+        Err(err) =>{
+            HttpResponse::BadRequest().body(format!("failed to get data: {:?}", err))
+        }
+    }
 }
 
-#[actix_web::get("/ipfs/has/{cid}")]
+#[actix_web::head("/ipfs/has/{cid}")]
 async fn ipfs_has(cid: web::Path<String>) -> HttpResponse {
-    HttpResponse::BadRequest().body("failed to check data int ipfs")
+    HttpResponse::new(actix_web::http::StatusCode::from_u16(200).unwrap())
 }
 
 /// Process voucher request from DApp, write voucher to rollup device

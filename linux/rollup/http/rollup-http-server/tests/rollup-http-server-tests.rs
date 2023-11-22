@@ -189,7 +189,7 @@ async fn test_ipfs_put_request(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let context = context_future.await;
     
-    match rollup_http_client::client::ipfs_put_request(&context.address, "file content".to_string(), "filenamess").await {
+    match rollup_http_client::client::ipfs_put_request(&context.address, "file content".to_string(), "filename").await {
         Ok(response) => {
             context.server_handle.stop(true).await;
             return Ok(())
@@ -212,9 +212,10 @@ async fn test_ipfs_get_request(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let context = context_future.await;
 
-    match rollup_http_client::client::ipfs_get_request(&context.address, "QmNrN9SCRZSmVpcoAcKHAtvMCQmjPY8zDE66SZvQRp3zzB").await {
+    match rollup_http_client::client::ipfs_get_request(&context.address, "filename").await {
         Ok(response) => {
                 context.server_handle.stop(true).await;
+                println!("{:?}", response);
                 return Ok(())
             },
         Err(err) => {
