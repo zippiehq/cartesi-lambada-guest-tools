@@ -86,3 +86,9 @@ impl fmt::Display for RollupRequestError {
         write!(f, "failed to execute rollup request ({})", self.cause)
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PutData {
+    pub data: String,
+    pub url: String,
+}

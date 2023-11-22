@@ -20,7 +20,7 @@ extern crate rollup_http_server;
 use actix_server::ServerHandle;
 use async_mutex::Mutex;
 use rollup_http_client::rollup::{
-    Exception, Notice, Report, RollupRequest, RollupResponse, Voucher,
+    Exception, Notice, Report, RollupRequest, RollupResponse, Voucher, PutData
 };
 use rollup_http_server::config::Config;
 use rollup_http_server::*;
@@ -32,6 +32,7 @@ use std::sync::Arc;
 
 const PORT: u16 = 10010;
 const HOST: &str = "127.0.0.1";
+const IPFS_PORT: u16 = 5001;
 const TEST_ROLLUP_DEVICE: &str = "rollup_driver.bin";
 
 #[allow(dead_code)]
@@ -179,6 +180,78 @@ async fn test_finish_request(
     }
     context.server_handle.stop(true).await;
     Ok(())
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_ipfs_put_request(
+    context_future: impl Future<Output = Context>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let context = context_future.await;
+
+    let put_data = PutData {
+        data: "test data for putting".to_string(),
+        url: "http://127.0.0.1:5001".to_string(),
+    };
+    
+    match rollup_http_client::client::ipfs_put_request(&context.address, &put_data).await {
+        Ok(response) => {
+            context.server_handle.stop(true).await;
+            return Ok(())
+        },
+        Err(err) => {
+            context.server_handle.stop(true).await;
+            return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            err.to_string(),
+        )))
+    },
+
+    }
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_ipfs_get_request(
+    context_future: impl Future<Output = Context>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let context = context_future.await;
+
+    match rollup_http_client::client::ipfs_get_request(&context.address, "http://127.0.0.1:5001", "QmNrN9SCRZSmVpcoAcKHAtvMCQmjPY8zDE66SZvQRp3zzB").await {
+        Ok(response) => {
+                context.server_handle.stop(true).await;
+                return Ok(())
+            },
+        Err(err) => {
+            context.server_handle.stop(true).await;
+            return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            err.to_string(),
+        )))},
+
+    }
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_ipfs_has_request(
+    context_future: impl Future<Output = Context>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let context = context_future.await;
+
+    match rollup_http_client::client::ipfs_has_request(&context.address, "http://127.0.0.1:5001", "QmNrN9SCRZSmVpcoAcKHAtvMCQmjPY8zDE66SZvQRp3zzB").await {
+        Ok(response) => {
+                context.server_handle.stop(true).await;
+                return Ok(())
+            },
+        Err(err) => {
+            context.server_handle.stop(true).await;
+            return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            err.to_string(),
+        )))},
+
+    }
 }
 
 #[rstest]

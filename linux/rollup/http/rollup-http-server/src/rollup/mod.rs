@@ -154,6 +154,11 @@ pub struct Exception {
 pub enum RollupResponse {
     Finish(bool),
 }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PutData {
+    pub data: String,
+    pub url: String,
+}
 
 pub fn rollup_finish_request(
     fd: RawFd,

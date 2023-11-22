@@ -17,7 +17,7 @@
 use std::os::unix::io::RawFd;
 use std::sync::Arc;
 
-use actix_web::{middleware::Logger, web::Data, web::Json, App, HttpResponse, HttpServer};
+use actix_web::{web, middleware::Logger, web::Data, web::Json, App, HttpResponse, HttpServer};
 use async_mutex::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -25,7 +25,7 @@ use tokio::sync::Notify;
 use crate::config::Config;
 use crate::rollup;
 use crate::rollup::{
-    AdvanceRequest, Exception, InspectRequest, Notice, Report, RollupRequest, Voucher,
+    AdvanceRequest, Exception, InspectRequest, Notice, Report, RollupRequest, Voucher, PutData
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,11 +49,11 @@ pub fn create_server(
         App::new()
             .app_data(data)
             .wrap(Logger::default())
-            .service(voucher)
-            .service(notice)
-            .service(report)
             .service(exception)
             .service(finish)
+            .service(ipfs_put)
+            .service(ipfs_get)
+            .service(ipfs_has)
     })
     .bind((config.http_address.as_str(), config.http_port))
     .map(|t| t)?
@@ -73,79 +73,37 @@ pub async fn run(
     server.await
 }
 
+#[actix_web::put("/ipfs/put")]
+async fn ipfs_put(put_data: Json<PutData>) -> HttpResponse {
+    HttpResponse::BadRequest().body("failed to put data to ipfs")
+}
+
+#[actix_web::get("/ipfs/get/{cid}")]
+async fn ipfs_get(ipfs_url: Json<String>, cid: web::Path<String>) -> HttpResponse {
+    HttpResponse::BadRequest().body("failed to get data from ipfs")
+}
+
+#[actix_web::get("/ipfs/has/{cid}")]
+async fn ipfs_has(ipfs_url: Json<String>, cid: web::Path<String>) -> HttpResponse {
+    HttpResponse::BadRequest().body("failed to check data int ipfs")
+}
+
 /// Process voucher request from DApp, write voucher to rollup device
 #[actix_web::post("/voucher")]
 async fn voucher(mut voucher: Json<Voucher>, data: Data<Mutex<Context>>) -> HttpResponse {
-    log::debug!("received voucher request");
-    // Check if address is valid
-    if voucher.destination.len() != (rollup::CARTESI_ROLLUP_ADDRESS_SIZE * 2 + 2) as usize
-        || (!voucher.destination.starts_with("0x"))
-    {
-        log::error!(
-            "address not valid: '{}' len: {}",
-            voucher.destination,
-            voucher.destination.len()
-        );
-        return HttpResponse::BadRequest().body("Address not valid");
-    }
-    let context = data.lock().await;
-    // Write voucher to linux rollup device
-    return match rollup::rollup_write_voucher(*context.rollup_fd.lock().await, &mut voucher.0) {
-        Ok(voucher_index) => {
-            log::debug!("voucher successfully inserted {:#?}", voucher);
-            HttpResponse::Created().json(IndexResponse {
-                index: voucher_index,
-            })
-        }
-        Err(e) => {
-            log::error!(
-                "unable to insert voucher, error details: '{}'",
-                e.to_string()
-            );
-            HttpResponse::BadRequest()
-                .body(format!("unable to insert voucher, error details: '{}'", e))
-        }
-    };
+    return HttpResponse::BadRequest().body("vouchers not valid in lambada mode");
 }
 
 /// Process notice request from DApp, write notice to rollup device
 #[actix_web::post("/notice")]
 async fn notice(mut notice: Json<Notice>, data: Data<Mutex<Context>>) -> HttpResponse {
-    log::debug!("received notice request");
-    let context = data.lock().await;
-    // Write notice to linux rollup device
-    return match rollup::rollup_write_notice(*context.rollup_fd.lock().await, &mut notice.0) {
-        Ok(notice_index) => {
-            log::debug!("notice successfully inserted {:#?}", notice);
-            HttpResponse::Created().json(IndexResponse {
-                index: notice_index,
-            })
-        }
-        Err(e) => {
-            log::error!("unable to insert notice, error details: '{}'", e);
-            HttpResponse::BadRequest()
-                .body(format!("Unable to insert notice, error details: '{}'", e))
-        }
-    };
+    return HttpResponse::BadRequest().body("notices not valid in lambada mode");
 }
 
 /// Process report request from DApp, write report to rollup device
 #[actix_web::post("/report")]
 async fn report(report: Json<Report>, data: Data<Mutex<Context>>) -> HttpResponse {
-    log::debug!("received report request");
-    let context = data.lock().await;
-    // Write report to linux rollup device
-    return match rollup::rollup_write_report(*context.rollup_fd.lock().await, &report.0) {
-        Ok(_) => {
-            log::debug!("report successfully inserted {:#?}", report);
-            HttpResponse::Accepted().body("")
-        }
-        Err(e) => {
-            log::error!("unable to insert report, error details: '{}'", e);
-            HttpResponse::BadRequest()
-                .body(format!("unable to insert notice, error details: '{}'", e))
-        }
-    };
+    return HttpResponse::BadRequest().body("reports not valid in lambada mode");
 }
 
 /// The DApp should call this method when it cannot proceed with the request processing after an exception happens.

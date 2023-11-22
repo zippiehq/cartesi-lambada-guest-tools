@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-use crate::rollup::{AdvanceRequest, Exception, IndexResponse, InspectRequest, Notice, Report, RollupRequest, RollupResponse, Voucher};
+use crate::rollup::{AdvanceRequest, Exception, IndexResponse, InspectRequest, Notice, Report, RollupRequest, RollupResponse, Voucher, PutData};
 use serde::{Deserialize, Serialize};
 use std::io::ErrorKind;
 
@@ -203,5 +203,90 @@ pub async fn send_finish_request(
                 Err(std::io::Error::new(ErrorKind::Other, e.to_string()))
             }
         }
+    }
+}
+
+pub async fn ipfs_put_request(
+    rollup_http_server_addr: &str,
+    data: &PutData,
+) -> Result<(), std::io::Error>{
+    {
+        let client = hyper::Client::new();
+        let req = hyper::Request::builder()
+            .method(hyper::Method::PUT)
+            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .uri(rollup_http_server_addr.to_string() + "/ipfs/put")
+            .body(hyper::Body::from(
+                serde_json::to_string(&data).expect("status json"),
+            ))
+            .expect("ipfs put request");
+
+        match client.request(req).await {
+            Ok(res) => {
+                if !res.status().is_success() {
+                    return Err(std::io::Error::new(ErrorKind::Other, "failed to put data to ipfs"));
+                }
+            },
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+pub async fn ipfs_get_request(
+    rollup_http_server_addr: &str,
+    ipfs_address: &str,
+    cid: &str
+) -> Result<(), std::io::Error>{
+    {
+        let client = hyper::Client::new();
+        let put_data = PutData {
+            data: "test data for putting".to_string(),
+            url: "http://127.0.0.1:5001".to_string(),
+        };
+        let req = hyper::Request::builder()
+            .method(hyper::Method::GET)
+            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .uri(rollup_http_server_addr.to_string() + "/ipfs/get/"+cid)
+            .body(hyper::Body::from(
+                serde_json::to_string(ipfs_address).expect("status json"),
+                ))
+            .expect("ipfs get request");
+        match client.request(req).await {
+            Ok(res) => {
+                if !res.status().is_success() {
+                    return Err(std::io::Error::new(ErrorKind::Other, "failed to get data from ipfs"));
+                }
+            },
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+pub async fn ipfs_has_request(
+    rollup_http_server_addr: &str,
+    ipfs_address: &str,
+    cid: &str
+) -> Result<(), std::io::Error>{
+    {
+        let client = hyper::Client::new();
+        let req = hyper::Request::builder()
+            .method(hyper::Method::GET)
+            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .uri(rollup_http_server_addr.to_string() + "/ipfs/has/"+cid)
+            .body(hyper::Body::from(
+                serde_json::to_string(ipfs_address).expect("status json"),
+                ))
+            .expect("ipfs has request");
+        match client.request(req).await {
+            Ok(res) => {
+                if !res.status().is_success() {
+                    return Err(std::io::Error::new(ErrorKind::Other, "failed to has data from ipfs"));
+                }
+            },
+            _ => {}
+        }
+        Ok(())
     }
 }

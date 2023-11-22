@@ -28,7 +28,6 @@ hyper = { version = "0.14", features = ["http1", "runtime", "client"] }
 hex = "0.4"
 rstest = "0.12"
 
-
 [build-dependencies]
 bindgen = "0.59"
 cc = "1.0"
