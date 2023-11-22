@@ -17,7 +17,7 @@
 use std::os::unix::io::RawFd;
 use std::sync::Arc;
 
-use actix_web::{web, middleware::Logger, web::Data, web::Json, App, HttpResponse, HttpServer};
+use actix_web::{web, middleware::Logger, web::Data, web::Bytes, web::Json, App, HttpResponse, HttpServer};
 use async_mutex::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -25,8 +25,10 @@ use tokio::sync::Notify;
 use crate::config::Config;
 use crate::rollup;
 use crate::rollup::{
-    AdvanceRequest, Exception, InspectRequest, Notice, Report, RollupRequest, Voucher, PutData
+    AdvanceRequest, Exception, InspectRequest, Notice, Report, RollupRequest, Voucher
 };
+use std::fs::File;
+use std::io::Write;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "request_type")]
@@ -73,18 +75,21 @@ pub async fn run(
     server.await
 }
 
-#[actix_web::put("/ipfs/put")]
-async fn ipfs_put(put_data: Json<PutData>) -> HttpResponse {
+#[actix_web::put("/ipfs/put/{cid}")]
+async fn ipfs_put(content: Bytes, cid: web::Path<String>) -> HttpResponse {
+    let mut file = File::create(cid.into_inner()).expect("Failed to create file");
+    file.write_all(&content.to_vec())
+        .expect("Failed to write to file");
     HttpResponse::BadRequest().body("failed to put data to ipfs")
 }
 
 #[actix_web::get("/ipfs/get/{cid}")]
-async fn ipfs_get(ipfs_url: Json<String>, cid: web::Path<String>) -> HttpResponse {
+async fn ipfs_get(cid: web::Path<String>) -> HttpResponse {
     HttpResponse::BadRequest().body("failed to get data from ipfs")
 }
 
 #[actix_web::get("/ipfs/has/{cid}")]
-async fn ipfs_has(ipfs_url: Json<String>, cid: web::Path<String>) -> HttpResponse {
+async fn ipfs_has(cid: web::Path<String>) -> HttpResponse {
     HttpResponse::BadRequest().body("failed to check data int ipfs")
 }
 

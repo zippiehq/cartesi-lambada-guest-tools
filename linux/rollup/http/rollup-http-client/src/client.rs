@@ -14,10 +14,10 @@
 // limitations under the License.
 //
 
-use crate::rollup::{AdvanceRequest, Exception, IndexResponse, InspectRequest, Notice, Report, RollupRequest, RollupResponse, Voucher, PutData};
+use crate::rollup::{AdvanceRequest, Exception, IndexResponse, InspectRequest, Notice, Report, RollupRequest, RollupResponse, Voucher};
 use serde::{Deserialize, Serialize};
 use std::io::ErrorKind;
-
+use actix_web::web::Bytes;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "request_type")]
 enum RollupHttpRequest {
@@ -208,17 +208,17 @@ pub async fn send_finish_request(
 
 pub async fn ipfs_put_request(
     rollup_http_server_addr: &str,
-    data: &PutData,
+    file_content: String,
+    cid: &str
 ) -> Result<(), std::io::Error>{
     {
+        let data = file_content.as_bytes().to_vec();
         let client = hyper::Client::new();
         let req = hyper::Request::builder()
             .method(hyper::Method::PUT)
-            .header(hyper::header::CONTENT_TYPE, "application/json")
-            .uri(rollup_http_server_addr.to_string() + "/ipfs/put")
-            .body(hyper::Body::from(
-                serde_json::to_string(&data).expect("status json"),
-            ))
+            .header(hyper::header::CONTENT_TYPE, "application/octet-stream")
+            .uri(rollup_http_server_addr.to_string() + "/ipfs/put/"+cid)
+            .body(hyper::Body::from(data))
             .expect("ipfs put request");
 
         match client.request(req).await {
@@ -235,22 +235,15 @@ pub async fn ipfs_put_request(
 
 pub async fn ipfs_get_request(
     rollup_http_server_addr: &str,
-    ipfs_address: &str,
     cid: &str
 ) -> Result<(), std::io::Error>{
     {
         let client = hyper::Client::new();
-        let put_data = PutData {
-            data: "test data for putting".to_string(),
-            url: "http://127.0.0.1:5001".to_string(),
-        };
         let req = hyper::Request::builder()
             .method(hyper::Method::GET)
-            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .header(hyper::header::CONTENT_TYPE, "application/octet-stream")
             .uri(rollup_http_server_addr.to_string() + "/ipfs/get/"+cid)
-            .body(hyper::Body::from(
-                serde_json::to_string(ipfs_address).expect("status json"),
-                ))
+            .body(hyper::Body::empty())
             .expect("ipfs get request");
         match client.request(req).await {
             Ok(res) => {
@@ -266,18 +259,15 @@ pub async fn ipfs_get_request(
 
 pub async fn ipfs_has_request(
     rollup_http_server_addr: &str,
-    ipfs_address: &str,
     cid: &str
 ) -> Result<(), std::io::Error>{
     {
         let client = hyper::Client::new();
         let req = hyper::Request::builder()
             .method(hyper::Method::GET)
-            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .header(hyper::header::CONTENT_TYPE, "application/octet-stream")
             .uri(rollup_http_server_addr.to_string() + "/ipfs/has/"+cid)
-            .body(hyper::Body::from(
-                serde_json::to_string(ipfs_address).expect("status json"),
-                ))
+            .body(hyper::Body::empty())
             .expect("ipfs has request");
         match client.request(req).await {
             Ok(res) => {
