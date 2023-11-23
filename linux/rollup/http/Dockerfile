@@ -20,9 +20,7 @@ COPY ./rollup-http-client /app/rollup-http-client
 WORKDIR /app/rollup-http-server
 
 ENV USE_ROLLUP_BINDINGS_MOCK=1
+ENV CACHE_DIR=output/
 RUN chmod +x build.sh
 
-#RUN sh -c "ipfs daemon & sleep 10 && cargo test -- --show-output --test-threads=1"
-CMD sh -c "ipfs daemon & sleep 10 && cargo test -- --show-output --test-threads=1"
-#CMD ["cargo", "test", "--", "--show-output", "--test-threads=1"]
-#CMD ["ipfs", "daemon"]
+CMD sh -c "cargo test -- --show-output --test-threads=1"

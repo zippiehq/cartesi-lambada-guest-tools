@@ -29,6 +29,8 @@ use crate::rollup::{
 };
 use std::fs::File;
 use std::io::{Write, Read};
+use cid::{Cid};
+use cid::multihash::Multihash;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "request_type")]
@@ -84,14 +86,15 @@ async fn ipfs_put(content: Bytes, cid: web::Path<String>) -> HttpResponse {
 }
 
 #[actix_web::get("/ipfs/get/{cid}")]
-async fn ipfs_get(cid: web::Path<String>) -> HttpResponse {
-    match File::open(&(std::env::var("CACHE_DIR").unwrap() + &cid.into_inner()))
+async fn ipfs_get(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpResponse {
+    let cid = cid.into_inner();
+    match File::open(&(std::env::var("CACHE_DIR").unwrap() + &cid))
     {
         Ok(mut file) => {
             let mut response = vec![];
             match file.read_to_end(&mut response) {
                 Ok(_) => {
-                    HttpResponse::Ok().json(response)
+                    HttpResponse::Ok().body(response)
                 },
                 Err(err) => {
                     HttpResponse::BadRequest().body(format!("failed to get data: {:?}", err))
@@ -99,7 +102,52 @@ async fn ipfs_get(cid: web::Path<String>) -> HttpResponse {
             }
         },
         Err(err) =>{
-            HttpResponse::BadRequest().body(format!("failed to get data: {:?}", err))
+            let cid = Cid::try_from(cid).unwrap();
+            let context = data.lock().await;
+            let rollup_fd = context.rollup_fd.lock().await;
+
+            let mut notice_data = Notice {
+                payload: "0x4201".to_owned() + &hex::encode(cid.to_bytes()),
+            };
+            rollup::rollup_write_notice(*rollup_fd, &mut notice_data);
+
+            let new_rollup_request = match rollup::perform_rollup_finish_request(*rollup_fd, true).await {
+                Ok(finish_request) => {
+
+                    if finish_request.next_request_type != 0 {
+                        return HttpResponse::BadRequest().body("finish request is not an ADVANCE");
+                    }
+
+                    match rollup::handle_rollup_requests(*rollup_fd, finish_request).await {
+                        Ok(rollup_request) => rollup_request,
+                        Err(e) => {
+                            let error_message = format!(
+                                "error performing handle_rollup_requests: `{}`",
+                                e.to_string()
+                            );
+                            log::error!("{}", &error_message);
+                            return HttpResponse::BadRequest().body(error_message);
+                        }
+                    }
+                }
+                Err(e) => {
+                    let error_message = format!(
+                        "error performing initial finish request: `{}`",
+                        e.to_string()
+                    );
+                    log::error!("{}", &error_message);
+                    return HttpResponse::BadRequest().body(error_message);
+                }
+            };
+            let payload = match new_rollup_request {
+                RollupRequest::Advance(advance_request) => advance_request.payload,
+                RollupRequest::Inspect(inspect_request) => {
+                    return HttpResponse::BadRequest().body("RollupRequest::Advance was expected");
+                },
+            };
+            HttpResponse::Ok()
+                .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
+                .body(payload)        
         }
     }
 }
