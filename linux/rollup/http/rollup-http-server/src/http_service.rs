@@ -31,6 +31,7 @@ use std::fs::File;
 use std::io::{Write, Read};
 use cid::{Cid};
 use cid::multihash::Multihash;
+use ipfs_api_backend_hyper::{IpfsApi, IpfsClient,TryFromUri};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "request_type")]
@@ -216,6 +217,15 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
     );
     let context = data.lock().await;
     let rollup_fd = context.rollup_fd.lock().await;
+    if accept {
+        let client = IpfsClient::default();
+        let cid = client.files_stat("/state").await.unwrap().hash;
+        let cid = Cid::try_from(cid).unwrap();
+        let mut notice_data = Notice {
+            payload: "0x4202".to_owned() + &hex::encode(cid.to_bytes()),
+        };
+        rollup::rollup_write_notice(*rollup_fd, &mut notice_data);
+    }
     // Write finish request, read indicator for next request
     let new_rollup_request = match rollup::perform_rollup_finish_request(*rollup_fd, accept).await {
         Ok(finish_request) => {
