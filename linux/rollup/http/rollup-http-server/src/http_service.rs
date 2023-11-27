@@ -14,6 +14,8 @@
 // limitations under the License.
 //
 
+extern crate nix;
+
 use std::os::unix::io::RawFd;
 use std::sync::Arc;
 
@@ -32,6 +34,16 @@ use std::io::{Write, Read};
 use cid::{Cid};
 use cid::multihash::Multihash;
 use ipfs_api_backend_hyper::{IpfsApi, IpfsClient,TryFromUri};
+use futures::TryStreamExt;
+use std::io::{Seek, SeekFrom};
+
+use std::os::unix::io::AsRawFd;
+use nix::ioctl_readwrite;
+
+const HTIF_DEVICE_YIELD: u8 = 2;
+const HTIF_YIELD_AUTOMATIC: u8 = 0;
+const HTIF_YIELD_REASON_PROGRESS: u16 = 0;
+const HTIF_YIELD_REASON_EXCEPTION: u16 = 6;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "request_type")]
@@ -59,6 +71,7 @@ pub fn create_server(
             .service(ipfs_put)
             .service(ipfs_get)
             .service(ipfs_has)
+            .service(get_tx)
     })
     .bind((config.http_address.as_str(), config.http_port))
     .map(|t| t)?
@@ -80,10 +93,49 @@ pub async fn run(
 
 #[actix_web::put("/ipfs/put/{cid}")]
 async fn ipfs_put(content: Bytes, cid: web::Path<String>) -> HttpResponse {
-    let mut file = File::create(&(std::env::var("CACHE_DIR").unwrap() + &cid.into_inner())).expect("Failed to create file");
+    let cid = cid.into_inner();
+    let mut file = File::create(&(std::env::var("CACHE_DIR").unwrap() + &cid)).expect("Failed to create file");
     file.write_all(&content.to_vec())
         .expect("Failed to write to file");
+
+    let file = File::create(&(std::env::var("STORE_DIR").unwrap() + &cid)).expect("Failed to create file");
     HttpResponse::Ok().finish()
+}
+
+#[actix_web::get("/get_tx")]
+async fn get_tx(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpResponse {
+    let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+    file.seek(SeekFrom::Start(1)).unwrap();
+    file.write(&0x0000003_u64.to_be_bytes()).unwrap();
+
+    let file = File::open("/dev/yield").unwrap();
+    let fd = file.as_raw_fd();
+
+    let mut data = YieldRequest {
+        dev: HTIF_DEVICE_YIELD,
+        cmd: HTIF_YIELD_AUTOMATIC,
+        reason: HTIF_YIELD_REASON_PROGRESS,
+        data: 0,
+    };
+
+    unsafe {
+        ioctl_yield(fd, &mut data).unwrap();
+    }
+    
+    let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+
+    let mut length_buf = [0u8; 8];
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.read_exact(&mut length_buf).unwrap();
+    let length = u64::from_be_bytes(length_buf);
+
+    let mut data = vec![0u8; length as usize];
+    file.seek(SeekFrom::Start(16)).unwrap();
+    file.read_exact(&mut data).unwrap();
+
+    HttpResponse::Ok()
+        .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
+        .body(data) 
 }
 
 #[actix_web::get("/ipfs/get/{cid}")]
@@ -103,52 +155,47 @@ async fn ipfs_get(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpRes
             }
         },
         Err(err) =>{
-            let cid = Cid::try_from(cid).unwrap();
-            let context = data.lock().await;
-            let rollup_fd = context.rollup_fd.lock().await;
 
-            let mut notice_data = Notice {
-                payload: "0x4201".to_owned() + &hex::encode(cid.to_bytes()),
+            let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+            file.seek(SeekFrom::Start(0)).unwrap();
+            file.write(&0x0000001_u64.to_be_bytes()).unwrap();
+
+            let cid_bytes = Cid::try_from(cid).unwrap().to_bytes();
+
+            let cid_length = cid_bytes.len() as u64;
+            file.seek(SeekFrom::Start(8)).unwrap();
+            file.write(&cid_length.to_be_bytes()).unwrap();
+
+            file.seek(SeekFrom::Start(16)).unwrap();
+            file.write(&cid_bytes).unwrap();
+
+            let file = File::open("/dev/yield").unwrap();
+            let fd = file.as_raw_fd();
+
+            let mut data = YieldRequest {
+                dev: HTIF_DEVICE_YIELD,
+                cmd: HTIF_YIELD_AUTOMATIC,
+                reason: HTIF_YIELD_REASON_PROGRESS,
+                data: 0,
             };
-            rollup::rollup_write_notice(*rollup_fd, &mut notice_data);
 
-            let new_rollup_request = match rollup::perform_rollup_finish_request(*rollup_fd, true).await {
-                Ok(finish_request) => {
+            unsafe {
+                ioctl_yield(fd, &mut data).unwrap();
+            }
+            let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
 
-                    if finish_request.next_request_type != 0 {
-                        return HttpResponse::BadRequest().body("finish request is not an ADVANCE");
-                    }
+            let mut length_buf = [0u8; 8];
+            file.seek(SeekFrom::Start(0)).unwrap();
+            file.read_exact(&mut length_buf).unwrap();
+            let length = u64::from_be_bytes(length_buf);
 
-                    match rollup::handle_rollup_requests(*rollup_fd, finish_request).await {
-                        Ok(rollup_request) => rollup_request,
-                        Err(e) => {
-                            let error_message = format!(
-                                "error performing handle_rollup_requests: `{}`",
-                                e.to_string()
-                            );
-                            log::error!("{}", &error_message);
-                            return HttpResponse::BadRequest().body(error_message);
-                        }
-                    }
-                }
-                Err(e) => {
-                    let error_message = format!(
-                        "error performing initial finish request: `{}`",
-                        e.to_string()
-                    );
-                    log::error!("{}", &error_message);
-                    return HttpResponse::BadRequest().body(error_message);
-                }
-            };
-            let payload = match new_rollup_request {
-                RollupRequest::Advance(advance_request) => advance_request.payload,
-                RollupRequest::Inspect(inspect_request) => {
-                    return HttpResponse::BadRequest().body("RollupRequest::Advance was expected");
-                },
-            };
+            let mut data = vec![0u8; length as usize];
+            file.seek(SeekFrom::Start(16)).unwrap();
+            file.read_exact(&mut data).unwrap();
+
             HttpResponse::Ok()
-                .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
-                .body(payload)        
+            .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
+            .body(data) 
         }
     }
 }
@@ -181,97 +228,102 @@ async fn report(report: Json<Report>, data: Data<Mutex<Context>>) -> HttpRespons
 /// The Rollup HTTP Server will pass the exception info to the Cartesi Server Manager.
 #[actix_web::post("/exception")]
 async fn exception(exception: Json<Exception>, data: Data<Mutex<Context>>) -> HttpResponse {
-    log::debug!("received exception request {:#?}", exception);
 
-    let context = data.lock().await;
-    // Throw an exception
-    return match rollup::rollup_throw_exception(*context.rollup_fd.lock().await, &exception.0) {
-        Ok(_) => {
-            log::debug!("exception successfully thrown {:#?}", exception);
-            HttpResponse::Accepted().body("")
-        }
-        Err(e) => {
-            log::error!("unable to throw exception, error details: '{}'", e);
-            HttpResponse::BadRequest()
-                .body(format!("unable to throw exception, error details: '{}'", e))
-        }
+    let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write(&0x0000002_u64.to_be_bytes()).unwrap();
+
+    let exception_data = exception.payload.as_bytes();
+
+    let exception_length = exception_data.len() as u64;
+    file.seek(SeekFrom::Start(8)).unwrap();
+    file.write(&exception_length.to_be_bytes()).unwrap();
+
+    file.seek(SeekFrom::Start(16)).unwrap();
+    file.write(&exception_data).unwrap();
+
+    let file = File::open("/dev/yield").unwrap();
+    let fd = file.as_raw_fd();
+
+    let mut data = YieldRequest {
+        dev: HTIF_DEVICE_YIELD,
+        cmd: HTIF_YIELD_AUTOMATIC,
+        reason: HTIF_YIELD_REASON_EXCEPTION,
+        data: 0,
     };
+
+    unsafe {
+        ioctl_yield(fd, &mut data).unwrap();
+    }
+    HttpResponse::Ok().finish()
+
 }
 
 /// Process finish request from DApp, write finish to rollup device
 /// and pass RollupFinish struct to linux rollup advance/inspect requests loop thread
 #[actix_web::post("/finish")]
 async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> HttpResponse {
-    log::debug!("received finish request {:#?}", finish);
-    // Prepare finish status for the rollup manager
-    let accept = match finish.status.as_str() {
-        "accept" => true,
-        "reject" => false,
+
+    let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write(&0x0000003_u64.to_be_bytes()).unwrap();
+    let accept: u64 = match finish.status.as_str() {
+        "accept" => 0,
+        "reject" => 1,
         _ => {
             return HttpResponse::BadRequest().body("status must be 'accept' or 'reject'");
         }
     };
-    log::debug!(
-        "request finished, writing to driver result `{}` ...",
-        accept
-    );
-    let context = data.lock().await;
-    let rollup_fd = context.rollup_fd.lock().await;
-    if accept {
-        let client = IpfsClient::default();
-        let cid = client.files_stat("/state").await.unwrap().hash;
-        let cid = Cid::try_from(cid).unwrap();
-        let mut notice_data = Notice {
-            payload: "0x4202".to_owned() + &hex::encode(cid.to_bytes()),
-        };
-        rollup::rollup_write_notice(*rollup_fd, &mut notice_data);
-    }
-    // Write finish request, read indicator for next request
-    let new_rollup_request = match rollup::perform_rollup_finish_request(*rollup_fd, accept).await {
-        Ok(finish_request) => {
-            // Received new request, process it
-            log::info!(
-                "Received new request of type {}",
-                match finish_request.next_request_type {
-                    0 => "ADVANCE",
-                    1 => "INSPECT",
-                    _ => "UNKNOWN",
-                }
-            );
-            match rollup::handle_rollup_requests(*rollup_fd, finish_request).await {
-                Ok(rollup_request) => rollup_request,
-                Err(e) => {
-                    let error_message = format!(
-                        "error performing handle_rollup_requests: `{}`",
-                        e.to_string()
-                    );
-                    log::error!("{}", &error_message);
-                    return HttpResponse::BadRequest().body(error_message);
-                }
-            }
-        }
-        Err(e) => {
-            let error_message = format!(
-                "error performing initial finish request: `{}`",
-                e.to_string()
-            );
-            log::error!("{}", &error_message);
-            return HttpResponse::BadRequest().body(error_message);
-        }
+
+    file.seek(SeekFrom::Start(8)).unwrap();
+    file.write(&accept.to_be_bytes()).unwrap();
+
+    let client = IpfsClient::default();
+    let cid = client.files_stat("/state").await.unwrap().hash;
+    let cid = Cid::try_from(cid).unwrap();
+    let cid_bytes = cid.to_bytes();
+
+    let cid_length = cid_bytes.len() as u64;
+    file.seek(SeekFrom::Start(16)).unwrap();
+    file.write(&cid_length.to_be_bytes()).unwrap();
+
+    file.seek(SeekFrom::Start(24)).unwrap();
+    file.write(&cid_bytes).unwrap();
+
+    let file = File::open("/dev/yield").unwrap();
+    let fd = file.as_raw_fd();
+
+    let mut data = YieldRequest {
+        dev: HTIF_DEVICE_YIELD,
+        cmd: HTIF_YIELD_AUTOMATIC,
+        reason: HTIF_YIELD_REASON_PROGRESS,
+        data: 0,
     };
 
-    // Respond to Dapp with the new rollup request
-    let http_rollup_request = match new_rollup_request {
-        RollupRequest::Advance(advance_request) => RollupHttpRequest::Advance {
-            data: advance_request,
-        },
-        RollupRequest::Inspect(inspect_request) => RollupHttpRequest::Inspect {
-            data: inspect_request,
-        },
-    };
-    HttpResponse::Ok()
-        .append_header((hyper::header::CONTENT_TYPE, "application/json"))
-        .json(http_rollup_request)
+    unsafe {
+        ioctl_yield(fd, &mut data).unwrap();
+    }
+
+        let dir = std::env::var("STORE_DIR").unwrap();
+        let paths = std::fs::read_dir(dir).unwrap();
+
+    for path in paths {
+        let mut file = File::open(path.unwrap().path()).unwrap();
+        let mut buffer = vec![];
+        file.read_to_end(&mut buffer).unwrap();
+
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.write(&0x0000005_u64.to_be_bytes()).unwrap();
+
+        let file_len = buffer.len().to_be_bytes();
+
+        file.seek(SeekFrom::Start(8)).unwrap();
+        file.write(&file_len).unwrap();
+
+        file.seek(SeekFrom::Start(16)).unwrap();
+        file.write(&buffer).unwrap();
+    }
+    HttpResponse::Ok().finish()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -299,3 +351,12 @@ struct Error {
 struct Context {
     pub rollup_fd: Arc<Mutex<RawFd>>,
 }
+
+#[repr(C)]
+pub struct YieldRequest {
+    dev: u8,
+    cmd: u8,
+    reason: u16,
+    data: u32,
+}
+ioctl_readwrite!(ioctl_yield, 0xd1, 0, YieldRequest);

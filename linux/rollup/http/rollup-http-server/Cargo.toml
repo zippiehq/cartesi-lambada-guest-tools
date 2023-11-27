@@ -29,6 +29,8 @@ hex = "0.4"
 rstest = "0.12"
 cid = "0.11.0"
 ipfs-api-backend-hyper = { version = "0.6.0", features = ["with-send-sync"], default-features = false }
+futures = "0.3.29"
+nix = {version = "0.27.1", features=["ioctl"]}
 
 [build-dependencies]
 bindgen = "0.59"

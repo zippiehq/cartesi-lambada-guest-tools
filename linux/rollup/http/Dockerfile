@@ -21,6 +21,8 @@ WORKDIR /app/rollup-http-server
 
 ENV USE_ROLLUP_BINDINGS_MOCK=1
 ENV CACHE_DIR=output/
+ENV STORE_DIR=/output
+ENV IO_DEVICE=/dev/mtdblock1
 RUN chmod +x build.sh
 
 CMD sh -c "ipfs daemon & sleep 10 && cargo test -- --show-output --test-threads=1"
