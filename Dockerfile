@@ -63,8 +63,8 @@ COPY linux/ ${BUILD_BASE}tools/linux/
 # build C/C++ tools
 # ------------------------------------------------------------------------------
 RUN make -C ${BUILD_BASE}tools/linux/htif/ CROSS_COMPILE="" yield.toolchain
-RUN make -C ${BUILD_BASE}tools/linux/rollup/ioctl-echo-loop/ CROSS_COMPILE="" ioctl-echo-loop.toolchain
-RUN make -C ${BUILD_BASE}tools/linux/rollup/rollup/ CROSS_COMPILE="" rollup.toolchain
+#RUN make -C ${BUILD_BASE}tools/linux/rollup/ioctl-echo-loop/ CROSS_COMPILE="" ioctl-echo-loop.toolchain
+#RUN make -C ${BUILD_BASE}tools/linux/rollup/rollup/ CROSS_COMPILE="" rollup.toolchain
 
 # build rust tools
 # ------------------------------------------------------------------------------
@@ -73,8 +73,8 @@ RUN mkdir -p $HOME/.cargo && \
     echo "[net]" >> $HOME/.cargo/config && \
     echo "git-fetch-with-cli = true" >> $HOME/.cargo/config
 
-RUN cd ${BUILD_BASE}tools/linux/rollup/http/echo-dapp && \
-    cargo build --release
+#RUN cd ${BUILD_BASE}tools/linux/rollup/http/echo-dapp && \
+#    cargo build --release
 RUN cd ${BUILD_BASE}tools/linux/rollup/http/rollup-http-server && \
     cargo build --release
 
@@ -88,9 +88,6 @@ COPY skel/ ${STAGING_BASE}
 RUN mkdir -p ${STAGING_BIN} && \
     cp ${BUILD_BASE}twuewand/rndaddentropy/rndaddentropy ${STAGING_BIN} && \
     cp ${BUILD_BASE}tools/linux/htif/yield ${STAGING_BIN} && \
-    cp ${BUILD_BASE}tools/linux/rollup/ioctl-echo-loop/ioctl-echo-loop ${STAGING_BIN} && \
-    cp ${BUILD_BASE}tools/linux/rollup/rollup/rollup ${STAGING_BIN} && \
-    cp ${BUILD_BASE}tools/linux/rollup/http/echo-dapp/target/release/echo-dapp ${STAGING_BIN} && \
     cp ${BUILD_BASE}tools/linux/rollup/http/rollup-http-server/target/release/rollup-http-server ${STAGING_BIN} && \
     cp ${BUILD_BASE}tools/linux/utils/* ${STAGING_BIN} && \
     tar czf ${BUILD_BASE}${MACHINE_EMULATOR_TOOLS_TAR_GZ} -C ${STAGING_BASE} .
