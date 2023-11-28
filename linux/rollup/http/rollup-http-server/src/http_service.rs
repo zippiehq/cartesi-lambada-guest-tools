@@ -32,7 +32,6 @@ use crate::rollup::{
 use std::fs::File;
 use std::io::{Write, Read};
 use cid::{Cid};
-use cid::multihash::Multihash;
 use ipfs_api_backend_hyper::{IpfsApi, IpfsClient,TryFromUri};
 use futures::TryStreamExt;
 use std::io::{Seek, SeekFrom};
@@ -44,6 +43,13 @@ const HTIF_DEVICE_YIELD: u8 = 2;
 const HTIF_YIELD_AUTOMATIC: u8 = 0;
 const HTIF_YIELD_REASON_PROGRESS: u16 = 0;
 const HTIF_YIELD_REASON_EXCEPTION: u16 = 6;
+
+const READ_BLOCK: u64 = 0x00001;
+const EXCEPTION: u64 = 0x00002;
+const GET_TX: u64 = 0x00003;
+const FINISH: u64 = 0x00004;
+const WRITE_BLOCK: u64 = 0x000005;
+
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "request_type")]
@@ -106,22 +112,37 @@ async fn ipfs_put(content: Bytes, cid: web::Path<String>) -> HttpResponse {
 async fn get_tx(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpResponse {
     let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
     file.seek(SeekFrom::Start(1)).unwrap();
-    file.write(&0x0000003_u64.to_be_bytes()).unwrap();
+    file.write(&GET_TX.to_be_bytes()).unwrap();
 
-    yield(HTIF_YIELD_REASON_PROGRESS);
+    do_yield(HTIF_YIELD_REASON_PROGRESS);
 
-    let mut length_buf = [0u8; 8];
+    let mut length_cid = [0u8; 8];
     file.seek(SeekFrom::Start(0)).unwrap();
-    file.read_exact(&mut length_buf).unwrap();
-    let length = u64::from_be_bytes(length_buf);
+    file.read_exact(&mut length_cid).unwrap();
+    let length_cid = u64::from_be_bytes(length_cid);
 
-    let mut data = vec![0u8; length as usize];
-    file.seek(SeekFrom::Start(16)).unwrap();
-    file.read_exact(&mut data).unwrap();
+    let mut cid = vec![0u8; length_cid as usize];
+    file.seek(SeekFrom::Start(8)).unwrap();
+    file.read_exact(&mut cid).unwrap();
+
+    let mut length_payload = [0u8; 8];
+    file.seek(SeekFrom::Start(16 + length_cid)).unwrap();
+    file.read_exact(&mut length_payload).unwrap();
+    let length_payload = u64::from_be_bytes(length_payload);
+
+    let mut payload = vec![0u8; length_payload as usize];
+    file.seek(SeekFrom::Start(24 + length_cid)).unwrap();
+    file.read_exact(&mut payload).unwrap();
+
+    let client = IpfsClient::default();
+    let cid = Cid::try_from(cid).unwrap();
+    client.files_cp(&cid.to_string(), "/state-new").await.unwrap();
+    client.files_rm("/state", true).await.unwrap();
+    client.files_mv("/state-new", "/state");
 
     HttpResponse::Ok()
         .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
-        .body(data) 
+        .body(payload) 
 }
 
 #[actix_web::get("/ipfs/get/{cid}")]
@@ -144,7 +165,7 @@ async fn ipfs_get(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpRes
 
             let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
             file.seek(SeekFrom::Start(0)).unwrap();
-            file.write(&0x0000001_u64.to_be_bytes()).unwrap();
+            file.write(&READ_BLOCK.to_be_bytes()).unwrap();
 
             let cid_bytes = Cid::try_from(cid).unwrap().to_bytes();
 
@@ -155,7 +176,7 @@ async fn ipfs_get(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpRes
             file.seek(SeekFrom::Start(16)).unwrap();
             file.write(&cid_bytes).unwrap();
 
-            yield(HTIF_YIELD_REASON_PROGRESS);
+            do_yield(HTIF_YIELD_REASON_PROGRESS);
 
             let mut length_buf = [0u8; 8];
             file.seek(SeekFrom::Start(0)).unwrap();
@@ -204,7 +225,7 @@ async fn exception(exception: Json<Exception>, data: Data<Mutex<Context>>) -> Ht
 
     let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
     file.seek(SeekFrom::Start(0)).unwrap();
-    file.write(&0x0000002_u64.to_be_bytes()).unwrap();
+    file.write(&EXCEPTION.to_be_bytes()).unwrap();
 
     let exception_data = exception.payload.as_bytes();
 
@@ -215,7 +236,7 @@ async fn exception(exception: Json<Exception>, data: Data<Mutex<Context>>) -> Ht
     file.seek(SeekFrom::Start(16)).unwrap();
     file.write(&exception_data).unwrap();
 
-    yield(HTIF_YIELD_REASON_EXCEPTION);
+    do_yield(HTIF_YIELD_REASON_EXCEPTION);
 
     HttpResponse::Ok().finish()
 
@@ -228,7 +249,7 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
 
     let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
     file.seek(SeekFrom::Start(0)).unwrap();
-    file.write(&0x0000004_u64.to_be_bytes()).unwrap();
+    file.write(&FINISH.to_be_bytes()).unwrap();
     let accept: u64 = match finish.status.as_str() {
         "accept" => 0,
         "reject" => 1,
@@ -252,7 +273,7 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
     file.seek(SeekFrom::Start(24)).unwrap();
     file.write(&cid_bytes).unwrap();
 
-    yield(HTIF_YIELD_REASON_PROGRESS);
+    do_yield(HTIF_YIELD_REASON_PROGRESS);
 
     let dir = std::env::var("STORE_DIR").unwrap();
     let paths = std::fs::read_dir(dir).unwrap();
@@ -263,7 +284,7 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
         file.read_to_end(&mut buffer).unwrap();
 
         file.seek(SeekFrom::Start(0)).unwrap();
-        file.write(&0x0000005_u64.to_be_bytes()).unwrap();
+        file.write(&WRITE_BLOCK.to_be_bytes()).unwrap();
 
         let file_len = buffer.len().to_be_bytes();
 
@@ -272,12 +293,12 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
 
         file.seek(SeekFrom::Start(16)).unwrap();
         file.write(&buffer).unwrap();
-        yield(HTIF_YIELD_REASON_PROGRESS);
+        do_yield(HTIF_YIELD_REASON_PROGRESS);
     }
     HttpResponse::Ok().finish()
 }
 
-fn yield (reason: u16) {
+fn do_yield(reason: u16) {
     let file = File::open("/dev/yield").unwrap();
         let fd = file.as_raw_fd();
 
