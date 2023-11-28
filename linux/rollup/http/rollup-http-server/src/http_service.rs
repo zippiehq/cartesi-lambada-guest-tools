@@ -108,21 +108,7 @@ async fn get_tx(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpRespo
     file.seek(SeekFrom::Start(1)).unwrap();
     file.write(&0x0000003_u64.to_be_bytes()).unwrap();
 
-    let file = File::open("/dev/yield").unwrap();
-    let fd = file.as_raw_fd();
-
-    let mut data = YieldRequest {
-        dev: HTIF_DEVICE_YIELD,
-        cmd: HTIF_YIELD_AUTOMATIC,
-        reason: HTIF_YIELD_REASON_PROGRESS,
-        data: 0,
-    };
-
-    unsafe {
-        ioctl_yield(fd, &mut data).unwrap();
-    }
-    
-    let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+    yield(HTIF_YIELD_REASON_PROGRESS);
 
     let mut length_buf = [0u8; 8];
     file.seek(SeekFrom::Start(0)).unwrap();
@@ -169,20 +155,7 @@ async fn ipfs_get(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpRes
             file.seek(SeekFrom::Start(16)).unwrap();
             file.write(&cid_bytes).unwrap();
 
-            let file = File::open("/dev/yield").unwrap();
-            let fd = file.as_raw_fd();
-
-            let mut data = YieldRequest {
-                dev: HTIF_DEVICE_YIELD,
-                cmd: HTIF_YIELD_AUTOMATIC,
-                reason: HTIF_YIELD_REASON_PROGRESS,
-                data: 0,
-            };
-
-            unsafe {
-                ioctl_yield(fd, &mut data).unwrap();
-            }
-            let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+            yield(HTIF_YIELD_REASON_PROGRESS);
 
             let mut length_buf = [0u8; 8];
             file.seek(SeekFrom::Start(0)).unwrap();
@@ -242,19 +215,8 @@ async fn exception(exception: Json<Exception>, data: Data<Mutex<Context>>) -> Ht
     file.seek(SeekFrom::Start(16)).unwrap();
     file.write(&exception_data).unwrap();
 
-    let file = File::open("/dev/yield").unwrap();
-    let fd = file.as_raw_fd();
+    yield(HTIF_YIELD_REASON_EXCEPTION);
 
-    let mut data = YieldRequest {
-        dev: HTIF_DEVICE_YIELD,
-        cmd: HTIF_YIELD_AUTOMATIC,
-        reason: HTIF_YIELD_REASON_EXCEPTION,
-        data: 0,
-    };
-
-    unsafe {
-        ioctl_yield(fd, &mut data).unwrap();
-    }
     HttpResponse::Ok().finish()
 
 }
@@ -266,7 +228,7 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
 
     let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
     file.seek(SeekFrom::Start(0)).unwrap();
-    file.write(&0x0000003_u64.to_be_bytes()).unwrap();
+    file.write(&0x0000004_u64.to_be_bytes()).unwrap();
     let accept: u64 = match finish.status.as_str() {
         "accept" => 0,
         "reject" => 1,
@@ -290,22 +252,10 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
     file.seek(SeekFrom::Start(24)).unwrap();
     file.write(&cid_bytes).unwrap();
 
-    let file = File::open("/dev/yield").unwrap();
-    let fd = file.as_raw_fd();
+    yield(HTIF_YIELD_REASON_PROGRESS);
 
-    let mut data = YieldRequest {
-        dev: HTIF_DEVICE_YIELD,
-        cmd: HTIF_YIELD_AUTOMATIC,
-        reason: HTIF_YIELD_REASON_PROGRESS,
-        data: 0,
-    };
-
-    unsafe {
-        ioctl_yield(fd, &mut data).unwrap();
-    }
-
-        let dir = std::env::var("STORE_DIR").unwrap();
-        let paths = std::fs::read_dir(dir).unwrap();
+    let dir = std::env::var("STORE_DIR").unwrap();
+    let paths = std::fs::read_dir(dir).unwrap();
 
     for path in paths {
         let mut file = File::open(path.unwrap().path()).unwrap();
@@ -322,8 +272,25 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
 
         file.seek(SeekFrom::Start(16)).unwrap();
         file.write(&buffer).unwrap();
+        yield(HTIF_YIELD_REASON_PROGRESS);
     }
     HttpResponse::Ok().finish()
+}
+
+fn yield (reason: u16) {
+    let file = File::open("/dev/yield").unwrap();
+        let fd = file.as_raw_fd();
+
+        let mut data = YieldRequest {
+            dev: HTIF_DEVICE_YIELD,
+            cmd: HTIF_YIELD_AUTOMATIC,
+            reason,
+            data: 0,
+        };
+
+        unsafe {
+            ioctl_yield(fd, &mut data).unwrap();
+        }
 }
 
 #[derive(Debug, Clone, Deserialize)]
