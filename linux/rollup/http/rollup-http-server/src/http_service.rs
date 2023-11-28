@@ -29,7 +29,7 @@ use crate::rollup;
 use crate::rollup::{
     AdvanceRequest, Exception, InspectRequest, Notice, Report, RollupRequest, Voucher
 };
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Write, Read};
 use cid::{Cid};
 use ipfs_api_backend_hyper::{IpfsApi, IpfsClient,TryFromUri};
@@ -110,7 +110,10 @@ async fn ipfs_put(content: Bytes, cid: web::Path<String>) -> HttpResponse {
 
 #[actix_web::get("/get_tx")]
 async fn get_tx(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpResponse {
-    let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+    let mut file = OpenOptions::new()
+    .read(true)
+    .write(true)
+    .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
     file.seek(SeekFrom::Start(1)).unwrap();
     file.write(&GET_TX.to_be_bytes()).unwrap();
 
@@ -163,7 +166,10 @@ async fn ipfs_get(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpRes
         },
         Err(err) =>{
 
-            let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+            let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
             file.seek(SeekFrom::Start(0)).unwrap();
             file.write(&READ_BLOCK.to_be_bytes()).unwrap();
 
@@ -223,7 +229,10 @@ async fn report(report: Json<Report>, data: Data<Mutex<Context>>) -> HttpRespons
 #[actix_web::post("/exception")]
 async fn exception(exception: Json<Exception>, data: Data<Mutex<Context>>) -> HttpResponse {
 
-    let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+    let mut file = OpenOptions::new()
+    .read(true)
+    .write(true)
+    .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
     file.seek(SeekFrom::Start(0)).unwrap();
     file.write(&EXCEPTION.to_be_bytes()).unwrap();
 
@@ -247,7 +256,10 @@ async fn exception(exception: Json<Exception>, data: Data<Mutex<Context>>) -> Ht
 #[actix_web::post("/finish")]
 async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> HttpResponse {
 
-    let mut file = File::open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+    let mut file = OpenOptions::new()
+    .read(true)
+    .write(true)
+    .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
     file.seek(SeekFrom::Start(0)).unwrap();
     file.write(&FINISH.to_be_bytes()).unwrap();
     let accept: u64 = match finish.status.as_str() {
@@ -279,7 +291,10 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
     let paths = std::fs::read_dir(dir).unwrap();
 
     for path in paths {
-        let mut file = File::open(path.unwrap().path()).unwrap();
+        let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path.unwrap().path()).unwrap();
         let mut buffer = vec![];
         file.read_to_end(&mut buffer).unwrap();
 
