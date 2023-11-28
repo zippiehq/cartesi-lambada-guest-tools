@@ -31,7 +31,7 @@ use crate::rollup::{
 };
 use std::fs::{File, OpenOptions};
 use std::io::{Write, Read};
-use cid::{Cid};
+use cid::Cid;
 use ipfs_api_backend_hyper::{IpfsApi, IpfsClient,TryFromUri};
 use futures::TryStreamExt;
 use std::io::{Seek, SeekFrom};
@@ -137,7 +137,8 @@ async fn get_tx(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpRespo
     file.seek(SeekFrom::Start(24 + length_cid)).unwrap();
     file.read_exact(&mut payload).unwrap();
 
-    let client = IpfsClient::default();
+    let endpoint = "http://127.0.0.1:5001".to_string();
+    let client = IpfsClient::from_str(&endpoint).unwrap();
     let cid = Cid::try_from(cid).unwrap();
     client.files_cp(&cid.to_string(), "/state-new").await.unwrap();
     client.files_rm("/state", true).await.unwrap();
@@ -273,7 +274,8 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
     file.seek(SeekFrom::Start(8)).unwrap();
     file.write(&accept.to_be_bytes()).unwrap();
 
-    let client = IpfsClient::default();
+    let endpoint = "http://127.0.0.1:5001".to_string();
+    let client = IpfsClient::from_str(&endpoint).unwrap();
     let cid = client.files_stat("/state").await.unwrap().hash;
     let cid = Cid::try_from(cid).unwrap();
     let cid_bytes = cid.to_bytes();
