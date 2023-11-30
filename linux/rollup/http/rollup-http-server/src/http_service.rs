@@ -37,7 +37,7 @@ use futures::TryStreamExt;
 use std::io::{Seek, SeekFrom};
 
 use std::os::unix::io::AsRawFd;
-use nix::ioctl_readwrite;
+use nix::{ioctl_readwrite, fcntl::OFlag};
 
 const HTIF_DEVICE_YIELD: u8 = 2;
 const HTIF_YIELD_AUTOMATIC: u8 = 0;
@@ -321,8 +321,17 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
 }
 
 fn do_yield(reason: u16) {
-    let file = File::open("/dev/yield").unwrap();
-        let fd = file.as_raw_fd();
+
+        let fd = match nix::fcntl::open(
+            "/dev/yield",
+            OFlag::O_RDWR | OFlag::O_DIRECT,
+            nix::sys::stat::Mode::S_IRWXO,
+        ) {
+            Ok(fd) => fd,
+            Err(err) => {
+                panic!()
+            }
+        }; 
 
         let mut data = YieldRequest {
             dev: HTIF_DEVICE_YIELD,
