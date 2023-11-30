@@ -116,7 +116,7 @@ async fn get_tx(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpRespo
     .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
     file.seek(SeekFrom::Start(1)).unwrap();
     file.write(&GET_TX.to_be_bytes()).unwrap();
-
+    file.sync_all().unwrap();
     do_yield(HTIF_YIELD_REASON_PROGRESS);
 
     let mut length_cid = [0u8; 8];
@@ -182,6 +182,7 @@ async fn ipfs_get(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpRes
 
             file.seek(SeekFrom::Start(16)).unwrap();
             file.write(&cid_bytes).unwrap();
+            file.sync_all().unwrap();
 
             do_yield(HTIF_YIELD_REASON_PROGRESS);
 
@@ -245,6 +246,7 @@ async fn exception(exception: Json<Exception>, data: Data<Mutex<Context>>) -> Ht
 
     file.seek(SeekFrom::Start(16)).unwrap();
     file.write(&exception_data).unwrap();
+    file.sync_all().unwrap();
 
     do_yield(HTIF_YIELD_REASON_EXCEPTION);
 
@@ -286,6 +288,7 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
 
     file.seek(SeekFrom::Start(24)).unwrap();
     file.write(&cid_bytes).unwrap();
+    file.sync_all().unwrap();
 
     do_yield(HTIF_YIELD_REASON_PROGRESS);
 
@@ -310,6 +313,8 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
 
         file.seek(SeekFrom::Start(16)).unwrap();
         file.write(&buffer).unwrap();
+        file.sync_all().unwrap();
+
         do_yield(HTIF_YIELD_REASON_PROGRESS);
     }
     HttpResponse::Ok().finish()
