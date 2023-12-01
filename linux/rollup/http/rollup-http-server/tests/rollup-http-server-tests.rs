@@ -30,6 +30,19 @@ use std::future::Future;
 use std::os::unix::io::{IntoRawFd, RawFd};
 use std::sync::Arc;
 
+use std::os::fd::FromRawFd;
+use std::io::SeekFrom;
+use nix::fcntl::OFlag;
+use std::io::Seek;
+use std::io::Read;
+use std::io::Write;
+#[repr(align(4096))]
+struct Aligned([u8; 4096 as usize]);
+
+use std::{
+    fs::OpenOptions,
+    os::unix::fs::OpenOptionsExt,
+};
 const PORT: u16 = 10010;
 const HOST: &str = "127.0.0.1";
 const IPFS_PORT: u16 = 5001;
@@ -286,6 +299,65 @@ async fn test_write_voucher(
         "index: 2, payload_size: 23, payload: voucher test payload 02"
     );
     std::fs::remove_file("test_voucher_2.txt")?;
+    Ok(())
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_reading(
+) -> Result<(), Box<dyn std::error::Error>> {
+
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_DIRECT)
+        .open("dev/file.test").unwrap();
+
+    file.seek(SeekFrom::End(0)).unwrap();
+
+    let file_length = file.stream_position().unwrap() as usize;
+
+    let mut buffer: Vec<u8> = Vec::with_capacity(file_length);
+    println!("file.stream position {:?}", file_length);
+
+    file.seek(SeekFrom::Start(0)).unwrap();
+    println!("file.stream position after seek to start {:?}", file.stream_position());
+
+    for i in (0..file_length).step_by(4096) {
+        let mut out_buf = Aligned([0; 4096 as usize]);
+        file.read_exact(&mut out_buf.0).unwrap();
+        buffer.extend_from_slice(&out_buf.0); 
+    }
+
+    assert_eq!(buffer.len() % 512, 0);
+    let data_to_write = 0_u64.to_be_bytes();
+
+    buffer.splice(8..8, data_to_write);
+    file.set_len(0).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+    for i in (0..buffer.len()).step_by(4096) {
+        let chunk: [u8; 4096] = {
+            let mut arr = [0; 4096];
+            if i + 4096 > buffer.len() {
+                let new_array = &buffer[i..buffer.len()];
+                arr[..new_array.len()].copy_from_slice(new_array);
+            }
+            else {
+                arr.copy_from_slice(&buffer[i..i + 4096]);
+            }
+            arr
+        };
+        let mut out_buf = Aligned(chunk);
+        file.write(&mut out_buf.0).unwrap();
+    }
+
+
+    file.seek(SeekFrom::End(0)).unwrap();
+
+    let file_length = file.stream_position().unwrap() as usize;
+
+    println!("file_length {:?}", file_length);
+
     Ok(())
 }
 

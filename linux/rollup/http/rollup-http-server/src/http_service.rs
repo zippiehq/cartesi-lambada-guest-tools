@@ -29,7 +29,7 @@ use crate::rollup;
 use crate::rollup::{
     AdvanceRequest, Exception, InspectRequest, Notice, Report, RollupRequest, Voucher
 };
-use std::fs::{File, OpenOptions};
+use std::os::fd::FromRawFd;
 use std::io::{Write, Read};
 use cid::Cid;
 use ipfs_api_backend_hyper::{IpfsApi, IpfsClient,TryFromUri};
@@ -38,6 +38,14 @@ use std::io::{Seek, SeekFrom};
 
 use std::os::unix::io::AsRawFd;
 use nix::{ioctl_readwrite, fcntl::OFlag};
+
+#[repr(align(4096))]
+struct Aligned([u8; 4096 as usize]);
+
+use std::{
+    fs::{OpenOptions, File},
+    os::unix::fs::OpenOptionsExt,
+};
 
 const HTIF_DEVICE_YIELD: u8 = 2;
 const HTIF_YIELD_AUTOMATIC: u8 = 0;
@@ -113,29 +121,82 @@ async fn get_tx(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpRespo
     let mut file = OpenOptions::new()
     .read(true)
     .write(true)
+    .custom_flags(libc::O_DIRECT)
     .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
-    file.seek(SeekFrom::Start(1)).unwrap();
-    file.write(&GET_TX.to_be_bytes()).unwrap();
+
+    file.seek(SeekFrom::End(0)).unwrap();
+
+    let file_length = file.stream_position().unwrap() as usize;
+
+    let mut buffer: Vec<u8> = Vec::with_capacity(file_length);
+
+    file.seek(SeekFrom::Start(0)).unwrap();
+
+    for i in (0..file_length).step_by(4096) {
+        let mut out_buf = Aligned([0; 4096 as usize]);
+        file.read_exact(&mut out_buf.0).unwrap();
+        buffer.extend_from_slice(&out_buf.0); 
+    }
+
+    assert_eq!(buffer.len() % 512, 0);
+
+    let get_tx_bytes = GET_TX.to_be_bytes();
+
+    buffer.splice(1..1, get_tx_bytes);
+
+    file.set_len(0).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+    for i in (0..buffer.len()).step_by(4096) {
+        let chunk: [u8; 4096] = {
+            let mut arr = [0; 4096];
+            if i + 4096 > buffer.len() {
+                let new_array = &buffer[i..buffer.len()];
+                arr[..new_array.len()].copy_from_slice(new_array);
+            }
+            else {
+                arr.copy_from_slice(&buffer[i..i + 4096]);
+            }
+            arr
+        };
+        let mut out_buf = Aligned(chunk);
+        file.write(&mut out_buf.0).unwrap();
+    }
+
     file.sync_all().unwrap();
     do_yield(HTIF_YIELD_REASON_PROGRESS);
 
-    let mut length_cid = [0u8; 8];
+    file.seek(SeekFrom::End(0)).unwrap();
+
+    let file_length = file.stream_position().unwrap() as usize;
+
+    let mut buffer: Vec<u8> = Vec::with_capacity(file_length);
+
     file.seek(SeekFrom::Start(0)).unwrap();
-    file.read_exact(&mut length_cid).unwrap();
+
+    for i in (0..file_length).step_by(4096) {
+        let mut out_buf = Aligned([0; 4096 as usize]);
+        file.read_exact(&mut out_buf.0).unwrap();
+        buffer.extend_from_slice(&out_buf.0); 
+    }
+
+    assert_eq!(buffer.len() % 512, 0);
+
+    let mut length_cid = [0u8; 8];
+
+    length_cid.copy_from_slice(&buffer[0..8]);
     let length_cid = u64::from_be_bytes(length_cid);
 
     let mut cid = vec![0u8; length_cid as usize];
-    file.seek(SeekFrom::Start(8)).unwrap();
-    file.read_exact(&mut cid).unwrap();
+    cid.copy_from_slice(&buffer[8..8+length_cid as usize]);
 
     let mut length_payload = [0u8; 8];
-    file.seek(SeekFrom::Start(16 + length_cid)).unwrap();
-    file.read_exact(&mut length_payload).unwrap();
+
+    length_payload.copy_from_slice(&buffer[16 + length_cid as usize..16 + length_cid as usize + 8]);
     let length_payload = u64::from_be_bytes(length_payload);
 
     let mut payload = vec![0u8; length_payload as usize];
-    file.seek(SeekFrom::Start(24 + length_cid)).unwrap();
-    file.read_exact(&mut payload).unwrap();
+
+    payload.copy_from_slice(&buffer[24 + length_cid as usize..24 + length_cid as usize + length_payload as usize]);
 
     let endpoint = "http://127.0.0.1:5001".to_string();
     let client = IpfsClient::from_str(&endpoint).unwrap();
@@ -170,30 +231,82 @@ async fn ipfs_get(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpRes
             let mut file = OpenOptions::new()
             .read(true)
             .write(true)
+            .custom_flags(libc::O_DIRECT)
             .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
-            file.seek(SeekFrom::Start(0)).unwrap();
-            file.write(&READ_BLOCK.to_be_bytes()).unwrap();
 
-            let cid_bytes = Cid::try_from(cid).unwrap().to_bytes();
+        file.seek(SeekFrom::End(0)).unwrap();
 
-            let cid_length = cid_bytes.len() as u64;
-            file.seek(SeekFrom::Start(8)).unwrap();
-            file.write(&cid_length.to_be_bytes()).unwrap();
+        let file_length = file.stream_position().unwrap() as usize;
+    
+        let mut buffer: Vec<u8> = Vec::with_capacity(file_length);
+    
+        file.seek(SeekFrom::Start(0)).unwrap();
+    
+        for i in (0..file_length).step_by(4096) {
+            let mut out_buf = Aligned([0; 4096 as usize]);
+            file.read_exact(&mut out_buf.0).unwrap();
+            buffer.extend_from_slice(&out_buf.0); 
+        }
+    
+        assert_eq!(buffer.len() % 512, 0);
 
-            file.seek(SeekFrom::Start(16)).unwrap();
-            file.write(&cid_bytes).unwrap();
+        let read_block_bytes = READ_BLOCK.to_be_bytes();
+
+        buffer.splice(0..0, read_block_bytes);
+
+        let cid_bytes = Cid::try_from(cid).unwrap().to_bytes();
+
+        let cid_length = cid_bytes.len() as u64;
+
+        let cid_length_bytes = cid_length.to_be_bytes();
+
+        buffer.splice(8..8, cid_length_bytes);
+        buffer.splice(16..16, cid_bytes);
+
+        file.set_len(0).unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        for i in (0..buffer.len()).step_by(4096) {
+            let chunk: [u8; 4096] = {
+                let mut arr = [0; 4096];
+                if i + 4096 > buffer.len() {
+                    let new_array = &buffer[i..buffer.len()];
+                    arr[..new_array.len()].copy_from_slice(new_array);
+                }
+                else {
+                    arr.copy_from_slice(&buffer[i..i + 4096]);
+                }
+                arr
+            };
+            let mut out_buf = Aligned(chunk);
+            file.write(&mut out_buf.0).unwrap();
+        }
+
             file.sync_all().unwrap();
 
             do_yield(HTIF_YIELD_REASON_PROGRESS);
 
-            let mut length_buf = [0u8; 8];
+            file.seek(SeekFrom::End(0)).unwrap();
+
+            let file_length = file.stream_position().unwrap() as usize;
+
+            let mut buffer: Vec<u8> = Vec::with_capacity(file_length);
+
             file.seek(SeekFrom::Start(0)).unwrap();
-            file.read_exact(&mut length_buf).unwrap();
+
+            for i in (0..file_length).step_by(4096) {
+                let mut out_buf = Aligned([0; 4096 as usize]);
+                file.read_exact(&mut out_buf.0).unwrap();
+                buffer.extend_from_slice(&out_buf.0); 
+            }
+
+            assert_eq!(buffer.len() % 512, 0);
+
+            let mut length_buf = [0u8; 8];
+            length_buf.copy_from_slice(&buffer[0..8]);
             let length = u64::from_be_bytes(length_buf);
 
             let mut data = vec![0u8; length as usize];
-            file.seek(SeekFrom::Start(16)).unwrap();
-            file.read_exact(&mut data).unwrap();
+            data.copy_from_slice(&buffer[16..16 + length as usize]);
 
             HttpResponse::Ok()
             .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
@@ -234,18 +347,54 @@ async fn exception(exception: Json<Exception>, data: Data<Mutex<Context>>) -> Ht
     let mut file = OpenOptions::new()
     .read(true)
     .write(true)
+    .custom_flags(libc::O_DIRECT)
     .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
-    file.seek(SeekFrom::Start(0)).unwrap();
-    file.write(&EXCEPTION.to_be_bytes()).unwrap();
 
-    let exception_data = exception.payload.as_bytes();
+    file.seek(SeekFrom::End(0)).unwrap();
+
+    let file_length = file.stream_position().unwrap() as usize;
+    
+    let mut buffer: Vec<u8> = Vec::with_capacity(file_length);
+    
+    file.seek(SeekFrom::Start(0)).unwrap();
+    
+    for i in (0..file_length).step_by(4096) {
+        let mut out_buf = Aligned([0; 4096 as usize]);
+        file.read_exact(&mut out_buf.0).unwrap();
+        buffer.extend_from_slice(&out_buf.0); 
+    }
+    
+    assert_eq!(buffer.len() % 512, 0);
+
+    let exception_bytes = EXCEPTION.to_be_bytes();
+    buffer.splice(0..0, exception_bytes);
+
+    let exception_data = exception.payload.as_bytes().to_owned();
 
     let exception_length = exception_data.len() as u64;
-    file.seek(SeekFrom::Start(8)).unwrap();
-    file.write(&exception_length.to_be_bytes()).unwrap();
 
-    file.seek(SeekFrom::Start(16)).unwrap();
-    file.write(&exception_data).unwrap();
+    let exception_length_bytes = exception_length.to_be_bytes();
+    buffer.splice(8..8, exception_length_bytes);
+    buffer.splice(16..16, exception_data);
+
+    file.set_len(0).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+        for i in (0..buffer.len()).step_by(4096) {
+            let chunk: [u8; 4096] = {
+                let mut arr = [0; 4096];
+                if i + 4096 > buffer.len() {
+                    let new_array = &buffer[i..buffer.len()];
+                    arr[..new_array.len()].copy_from_slice(new_array);
+                }
+                else {
+                    arr.copy_from_slice(&buffer[i..i + 4096]);
+                }
+                arr
+            };
+            let mut out_buf = Aligned(chunk);
+            file.write(&mut out_buf.0).unwrap();
+        }
+
     file.sync_all().unwrap();
 
     do_yield(HTIF_YIELD_REASON_EXCEPTION);
@@ -262,9 +411,28 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
     let mut file = OpenOptions::new()
     .read(true)
     .write(true)
+    .custom_flags(libc::O_DIRECT)
     .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+
+    file.seek(SeekFrom::End(0)).unwrap();
+
+    let file_length = file.stream_position().unwrap() as usize;
+    
+    let mut buffer: Vec<u8> = Vec::with_capacity(file_length);
+    
     file.seek(SeekFrom::Start(0)).unwrap();
-    file.write(&FINISH.to_be_bytes()).unwrap();
+    
+    for i in (0..file_length).step_by(4096) {
+        let mut out_buf = Aligned([0; 4096 as usize]);
+        file.read_exact(&mut out_buf.0).unwrap();
+        buffer.extend_from_slice(&out_buf.0); 
+    }
+    
+    assert_eq!(buffer.len() % 512, 0);
+
+    let finish_bytes = FINISH.to_be_bytes();
+    buffer.splice(0..0, finish_bytes);
+
     let accept: u64 = match finish.status.as_str() {
         "accept" => 0,
         "reject" => 1,
@@ -273,8 +441,8 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
         }
     };
 
-    file.seek(SeekFrom::Start(8)).unwrap();
-    file.write(&accept.to_be_bytes()).unwrap();
+    let accept_bytes = accept.to_be_bytes();
+    buffer.splice(8..8, accept_bytes);
 
     let endpoint = "http://127.0.0.1:5001".to_string();
     let client = IpfsClient::from_str(&endpoint).unwrap();
@@ -283,11 +451,29 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
     let cid_bytes = cid.to_bytes();
 
     let cid_length = cid_bytes.len() as u64;
-    file.seek(SeekFrom::Start(16)).unwrap();
-    file.write(&cid_length.to_be_bytes()).unwrap();
 
-    file.seek(SeekFrom::Start(24)).unwrap();
-    file.write(&cid_bytes).unwrap();
+    let cid_length_bytes = cid_length.to_be_bytes();
+    buffer.splice(16..16, cid_length_bytes);
+    buffer.splice(24..24, cid_bytes);
+
+    file.set_len(0).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+        for i in (0..buffer.len()).step_by(4096) {
+            let chunk: [u8; 4096] = {
+                let mut arr = [0; 4096];
+                if i + 4096 > buffer.len() {
+                    let new_array = &buffer[i..buffer.len()];
+                    arr[..new_array.len()].copy_from_slice(new_array);
+                }
+                else {
+                    arr.copy_from_slice(&buffer[i..i + 4096]);
+                }
+                arr
+            };
+            let mut out_buf = Aligned(chunk);
+            file.write(&mut out_buf.0).unwrap();
+    }
+
     file.sync_all().unwrap();
 
     do_yield(HTIF_YIELD_REASON_PROGRESS);
@@ -321,17 +507,9 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
 }
 
 fn do_yield(reason: u16) {
-
-        let fd = match nix::fcntl::open(
-            "/dev/yield",
-            OFlag::O_RDWR | OFlag::O_DIRECT,
-            nix::sys::stat::Mode::S_IRWXO,
-        ) {
-            Ok(fd) => fd,
-            Err(err) => {
-                panic!()
-            }
-        }; 
+    
+        let file = File::open("/dev/yield").unwrap();
+        let fd = file.as_raw_fd();
 
         let mut data = YieldRequest {
             dev: HTIF_DEVICE_YIELD,
