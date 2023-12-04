@@ -14,6 +14,27 @@
 # limitations under the License.
 #
 
+FROM ubuntu:22.04 as cross
+RUN DEBIAN_FRONTEND=noninteractive apt update && \
+    apt upgrade -y && \
+    apt install -y --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      git \
+      protobuf-compiler \
+      rsync \
+      gcc-riscv64-linux-gnu \
+      libc6-dev-riscv64-cross \
+      curl \
+      && \
+    rm -rf /var/lib/apt/lists/*
+
+ARG BUILD_BASE=/opt/cartesi/
+COPY linux/ ${BUILD_BASE}tools/linux/
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |  sh -s -- --default-toolchain stable -y
+RUN cd ${BUILD_BASE}tools/linux/rollup/http/rollup-http-server && ~/.cargo/bin/rustup target add riscv64gc-unknown-linux-gnu
+RUN cd ${BUILD_BASE}tools/linux/rollup/http/rollup-http-server && CC_riscv64gc_unknown_linux_gnu=riscv64-linux-gnu-gcc CROSS_COMPILE=riscv64-linux-gnu-gcc- ~/.cargo/bin/cargo build --release --target riscv64gc-unknown-linux-gnu
+
 FROM --platform=linux/riscv64 riscv64/ubuntu:22.04 as sdk
 ARG LINUX_SOURCES_VERSION=5.15.63-ctsi-2
 ARG LINUX_SOURCES_FILEPATH=dep/linux-sources-${LINUX_SOURCES_VERSION}.tar.gz
@@ -31,7 +52,6 @@ RUN DEBIAN_FRONTEND=noninteractive apt update && \
       git \
       protobuf-compiler \
       rsync \
-      rust-all=1.58.1+dfsg1~ubuntu1-0ubuntu2 \
       && \
     rm -rf /var/lib/apt/lists/*
 
@@ -75,8 +95,11 @@ RUN mkdir -p $HOME/.cargo && \
 
 #RUN cd ${BUILD_BASE}tools/linux/rollup/http/echo-dapp && \
 #    cargo build --release
-RUN cd ${BUILD_BASE}tools/linux/rollup/http/rollup-http-server && \
-    cargo build --release
+# this is now crosss compiled
+#RUN cd ${BUILD_BASE}tools/linux/rollup/http/rollup-http-server && \
+#    cargo build --release
+RUN mkdir -p ${BUILD_BASE}tools/linux/rollup/http/rollup-http-server/target/release
+COPY --from=cross ${BUILD_BASE}/tools/linux/rollup/http/rollup-http-server/target/riscv64gc-unknown-linux-gnu/release/rollup-http-server ${BUILD_BASE}tools/linux/rollup/http/rollup-http-server/target/release/rollup-http-server
 
 # pack tools (tar.gz)
 # ------------------------------------------------------------------------------

@@ -17,4 +17,3 @@
 pub mod config;
 pub mod dapp_process;
 pub mod http_service;
-pub mod rollup;

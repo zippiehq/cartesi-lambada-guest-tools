@@ -25,10 +25,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
 use crate::config::Config;
-use crate::rollup;
-use crate::rollup::{
-    AdvanceRequest, Exception, InspectRequest, Notice, Report, RollupRequest, Voucher
-};
 use std::os::fd::FromRawFd;
 use std::io::{Write, Read};
 use cid::Cid;
@@ -59,23 +55,12 @@ const FINISH: u64 = 0x00004;
 const WRITE_BLOCK: u64 = 0x000005;
 
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "request_type")]
-enum RollupHttpRequest {
-    #[serde(rename = "advance_state")]
-    Advance { data: AdvanceRequest },
-    #[serde(rename = "inspect_state")]
-    Inspect { data: InspectRequest },
-}
-
 /// Create new instance of http server
 pub fn create_server(
     config: &Config,
-    rollup_fd: Arc<Mutex<RawFd>>,
 ) -> std::io::Result<actix_server::Server> {
     let server = HttpServer::new(move || {
         let data = Data::new(Mutex::new(Context {
-            rollup_fd: rollup_fd.clone(),
         }));
         App::new()
             .app_data(data)
@@ -96,11 +81,10 @@ pub fn create_server(
 /// Create and run new instance of http server
 pub async fn run(
     config: &Config,
-    rollup_fd: Arc<Mutex<RawFd>>,
     server_ready: Arc<Notify>,
 ) -> std::io::Result<()> {
     log::info!("starting http dispatcher http service!");
-    let server = create_server(config, rollup_fd)?;
+    let server = create_server(config)?;
     server_ready.notify_one();
     server.await
 }
@@ -117,13 +101,13 @@ async fn ipfs_put(content: Bytes, cid: web::Path<String>) -> HttpResponse {
 }
 
 #[actix_web::get("/get_tx")]
-async fn get_tx(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpResponse {
+async fn get_tx() -> HttpResponse {
 
     let mut file = OpenOptions::new()
         .write(true)
         .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
 
-    file.seek(SeekFrom::Start(1)).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
     file.write(&GET_TX.to_be_bytes()).unwrap();
     file.sync_all().unwrap();
 
@@ -256,6 +240,7 @@ async fn ipfs_has(cid: web::Path<String>) -> HttpResponse {
     HttpResponse::new(actix_web::http::StatusCode::from_u16(200).unwrap())
 }
 
+/*
 /// Process voucher request from DApp, write voucher to rollup device
 #[actix_web::post("/voucher")]
 async fn voucher(mut voucher: Json<Voucher>, data: Data<Mutex<Context>>) -> HttpResponse {
@@ -273,12 +258,13 @@ async fn notice(mut notice: Json<Notice>, data: Data<Mutex<Context>>) -> HttpRes
 async fn report(report: Json<Report>, data: Data<Mutex<Context>>) -> HttpResponse {
     return HttpResponse::BadRequest().body("reports not valid in lambada mode");
 }
+*/
 
 /// The DApp should call this method when it cannot proceed with the request processing after an exception happens.
 /// This method should be the last method ever called by the DApp backend, and it should not expect the call to return.
 /// The Rollup HTTP Server will pass the exception info to the Cartesi Server Manager.
 #[actix_web::post("/exception")]
-async fn exception(exception: Json<Exception>, data: Data<Mutex<Context>>) -> HttpResponse {
+async fn exception(content: Bytes, data: Data<Mutex<Context>>) -> HttpResponse {
 
     let mut file = OpenOptions::new()
     .write(true)
@@ -286,7 +272,7 @@ async fn exception(exception: Json<Exception>, data: Data<Mutex<Context>>) -> Ht
     file.seek(SeekFrom::Start(0)).unwrap();
     file.write(&EXCEPTION.to_be_bytes()).unwrap();
 
-    let exception_data = exception.payload.as_bytes();
+    let exception_data = content;
 
     let exception_length = exception_data.len() as u64;
     file.seek(SeekFrom::Start(8)).unwrap();
@@ -305,7 +291,7 @@ async fn exception(exception: Json<Exception>, data: Data<Mutex<Context>>) -> Ht
 /// Process finish request from DApp, write finish to rollup device
 /// and pass RollupFinish struct to linux rollup advance/inspect requests loop thread
 #[actix_web::post("/finish")]
-async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> HttpResponse {
+async fn finish(data: Data<Mutex<Context>>) -> HttpResponse {
 
     let mut file = OpenOptions::new()
     .write(true)
@@ -313,13 +299,7 @@ async fn finish(finish: Json<FinishRequest>, data: Data<Mutex<Context>>) -> Http
 
     file.seek(SeekFrom::Start(0)).unwrap();
     file.write(&FINISH.to_be_bytes()).unwrap();
-    let accept: u64 = match finish.status.as_str() {
-        "accept" => 0,
-        "reject" => 1,
-        _ => {
-            return HttpResponse::BadRequest().body("status must be 'accept' or 'reject'");
-        }
-    };
+    let accept: u64 = 0;
 
     file.seek(SeekFrom::Start(8)).unwrap();
     file.write(&accept.to_be_bytes()).unwrap();
@@ -407,7 +387,6 @@ struct Error {
 }
 
 struct Context {
-    pub rollup_fd: Arc<Mutex<RawFd>>,
 }
 
 #[repr(C)]

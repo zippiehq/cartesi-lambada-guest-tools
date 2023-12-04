@@ -20,10 +20,8 @@ use std::sync::Arc;
 use async_mutex::Mutex;
 use tokio::process::Command;
 
-use crate::rollup::{self, Exception};
-
 /// Execute the dapp command and throw a rollup exception if it fails or exits
-pub async fn run(args: Vec<String>, rollup_fd: Arc<Mutex<RawFd>>) {
+pub async fn run(args: Vec<String>) {
     log::info!("starting dapp: {}", args.join(" "));
     let task = tokio::task::spawn_blocking(move || Command::new(&args[0]).args(&args[1..]).spawn());
     let message = match task.await {
@@ -37,15 +35,5 @@ pub async fn run(args: Vec<String>, rollup_fd: Arc<Mutex<RawFd>>) {
         Err(e) => format!("failed to spawn task with {}", e),
     };
     log::warn!("throwing exception because {}", message);
-    let exception = Exception {
-        payload: String::from("0x") + &hex::encode(message),
-    };
-    match rollup::rollup_throw_exception(*rollup_fd.lock().await, &exception) {
-        Ok(_) => {
-            log::debug!("exception successfully thrown {:#?}", exception);
-        }
-        Err(e) => {
-            log::error!("unable to throw exception, error details: '{}'", e);
-        }
-    };
+    // TODO: do exception in new style
 }

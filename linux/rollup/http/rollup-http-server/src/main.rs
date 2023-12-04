@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use async_mutex::Mutex;
 use getopts::{Options, ParsingStyle};
-use rollup_http_server::{config::Config, dapp_process, http_service, rollup};
+use rollup_http_server::{config::Config, dapp_process, http_service};
 use tokio::sync::Notify;
 
 fn print_usage(program: &str, opts: Options) {
@@ -101,30 +101,20 @@ async fn main() -> std::io::Result<()> {
     }
 
     // Open rollup device
-    let rollup_file = match File::open(rollup::ROLLUP_DEVICE_NAME) {
-        Ok(file) => file,
-        Err(e) => {
-            log::error!("error opening rollup device {}", e.to_string());
-            return Err(e);
-        }
-    };
-
-    let rollup_fd: Arc<Mutex<RawFd>> = Arc::new(Mutex::new(rollup_file.into_raw_fd()));
     let server_ready = Arc::new(Notify::new());
 
     // In another thread, wait until the server is ready and then start the dapp
     {
-        let rollup_fd = rollup_fd.clone();
         let server_ready = server_ready.clone();
         tokio::spawn(async move {
             server_ready.notified().await;
-            dapp_process::run(matches.free, rollup_fd).await;
+            dapp_process::run(matches.free).await;
         })
     };
 
     // Open http service
     tokio::select! {
-        result = http_service::run(&http_config, rollup_fd, server_ready) => {
+        result = http_service::run(&http_config, server_ready) => {
             match result {
                 Ok(_) => log::info!("http service terminated successfully"),
                 Err(e) => log::warn!("http service terminated with error: {}", e),
