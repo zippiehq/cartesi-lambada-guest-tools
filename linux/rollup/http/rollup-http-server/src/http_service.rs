@@ -158,17 +158,16 @@ async fn get_tx() -> HttpResponse {
     let client = IpfsClient::from_str(&endpoint).unwrap();
     let cid = Cid::try_from(cid).unwrap();
 
-    let app_cid = client.files_stat("/state/app").await.unwrap().hash;
-    let ipfs_app_cid = client.files_stat("/app").await.unwrap().hash;
-    let ipfs_app_cid = Cid::try_from(ipfs_app_cid).unwrap();
-    let app_cid = Cid::try_from(app_cid).unwrap();
-
-    assert_eq!(app_cid, ipfs_app_cid);
-
     client.files_cp(&("/ipfs/".to_string() + &cid.to_string()), "/state-new").await.unwrap();
     client.files_mv("/state", "/previous").await.unwrap();
     client.files_rm("/state", true).await.unwrap();
     client.files_mv("/state-new", "/state").await.unwrap();
+    
+    let app_cid = client.files_stat("/state/app").await.unwrap().hash;
+    let ipfs_app_cid = client.files_stat("/app").await.unwrap().hash;
+    let ipfs_app_cid = Cid::try_from(ipfs_app_cid).unwrap();
+    let app_cid = Cid::try_from(app_cid).unwrap();
+    assert_eq!(app_cid, ipfs_app_cid);
 
     HttpResponse::Ok()
         .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
