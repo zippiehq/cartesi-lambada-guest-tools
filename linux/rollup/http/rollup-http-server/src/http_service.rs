@@ -159,7 +159,7 @@ async fn get_tx() -> HttpResponse {
     let cid = Cid::try_from(cid).unwrap();
 
     client.files_cp(&("/ipfs/".to_string() + &cid.to_string()), "/state-new").await.unwrap();
-    client.files_mv("/state", "/previous").await.unwrap();
+    client.files_cp(&("/ipfs/".to_string() + &cid.to_string()), "/state-new/previous").await.unwrap();
     client.files_rm("/state", true).await.unwrap();
     client.files_mv("/state-new", "/state").await.unwrap();
     
