@@ -172,7 +172,7 @@ async fn get_tx() -> HttpResponse {
 
     assert_eq!(app_cid, ipfs_app_cid);
 
-    client.files_cp(&cid.to_string(), "/state-new").await.unwrap();
+    client.files_cp(&("/ipfs/".to_string() + &cid.to_string()), "/state-new").await.unwrap();
     client.files_mv("/state", "/previous");
     client.files_rm("/state", true).await.unwrap();
     client.files_mv("/state-new", "/state");
@@ -227,7 +227,7 @@ async fn get_app() -> HttpResponse {
     let client = IpfsClient::from_str(&endpoint).unwrap();
     let cid = Cid::try_from(cid).unwrap();
 
-    client.files_cp(&cid.to_string(), "/app-new").await.unwrap();
+    client.files_cp(&("/ipfs/".to_string() + &cid.to_string()), "/app-new").await.unwrap();
     client.files_rm("/app", true).await.unwrap();
     client.files_mv("/app-new", "/app");
     HttpResponse::Ok().finish()
