@@ -53,6 +53,8 @@ const EXCEPTION: u64 = 0x00002;
 const GET_TX: u64 = 0x00003;
 const FINISH: u64 = 0x00004;
 const WRITE_BLOCK: u64 = 0x000005;
+const GET_APP: u64 = 0x00006;
+const HINT: u64 = 0x00007;
 
 
 /// Create new instance of http server
@@ -71,6 +73,8 @@ pub fn create_server(
             .service(ipfs_get)
             .service(ipfs_has)
             .service(get_tx)
+            .service(get_app)
+            .service(hint)
     })
     .bind((config.http_address.as_str(), config.http_port))
     .map(|t| t)?
@@ -136,30 +140,97 @@ async fn get_tx() -> HttpResponse {
     let mut length_cid = [0u8; 8];
 
     length_cid.copy_from_slice(&buffer[0..8]);
-    let length_cid = u64::from_be_bytes(length_cid);
+    let length_cid = u64::from_be_bytes(length_cid) as usize;
 
-    let mut cid = vec![0u8; length_cid as usize];
-    cid.copy_from_slice(&buffer[8..8+length_cid as usize]);
+    let mut cid = vec![0u8; length_cid];
+    cid.copy_from_slice(&buffer[8..8+length_cid]);
 
     let mut length_payload = [0u8; 8];
 
-    length_payload.copy_from_slice(&buffer[16 + length_cid as usize..16 + length_cid as usize + 8]);
-    let length_payload = u64::from_be_bytes(length_payload);
+    length_payload.copy_from_slice(&buffer[16 + length_cid..16 + length_cid + 8]);
+    let length_payload = u64::from_be_bytes(length_payload) as usize;
 
-    let mut payload = vec![0u8; length_payload as usize];
+    let mut payload = vec![0u8; length_payload];
 
-    payload.copy_from_slice(&buffer[24 + length_cid as usize..24 + length_cid as usize + length_payload as usize]);
+    payload.copy_from_slice(&buffer[24 + length_cid..24 + length_cid + length_payload]);
+
+    let mut length_app_cid = [0u8; 8];
+
+    length_app_cid.copy_from_slice(&buffer[24 + length_cid + length_payload ..32 + length_cid + length_payload]);
+    let length_app_cid = u64::from_be_bytes(length_app_cid) as usize;
+
+    let mut app_cid = vec![0u8; length_app_cid as usize];
+    app_cid.copy_from_slice(&buffer[32 + length_cid + length_payload..32 + length_cid + length_payload + length_app_cid]);
 
     let endpoint = "http://127.0.0.1:5001".to_string();
     let client = IpfsClient::from_str(&endpoint).unwrap();
     let cid = Cid::try_from(cid).unwrap();
+    let app_cid = Cid::try_from(app_cid).unwrap();
+
+    let ipfs_app_cid = client.files_stat("/app").await.unwrap().hash;
+    let ipfs_app_cid = Cid::try_from(ipfs_app_cid).unwrap();
+
+    assert_eq!(app_cid, ipfs_app_cid);
+
     client.files_cp(&cid.to_string(), "/state-new").await.unwrap();
+    client.files_mv("/state", "/previous");
     client.files_rm("/state", true).await.unwrap();
     client.files_mv("/state-new", "/state");
 
     HttpResponse::Ok()
         .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
         .body(payload) 
+}
+
+#[actix_web::get("/get_app")]
+async fn get_app() -> HttpResponse {
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write(&GET_APP.to_be_bytes()).unwrap();
+    file.sync_all().unwrap();
+
+    do_yield(HTIF_YIELD_REASON_PROGRESS);
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECT)
+        .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+
+    file.seek(SeekFrom::End(0)).unwrap();
+
+    let file_length = file.stream_position().unwrap() as usize;
+
+    let mut buffer: Vec<u8> = Vec::with_capacity(file_length);
+
+    file.seek(SeekFrom::Start(0)).unwrap();
+
+    for i in (0..file_length).step_by(4096) {
+        let mut out_buf = Aligned([0; 4096 as usize]);
+        file.read_exact(&mut out_buf.0).unwrap();
+        buffer.extend_from_slice(&out_buf.0); 
+    }
+
+    assert_eq!(buffer.len() % 512, 0);
+
+    let mut length_cid = [0u8; 8];
+
+    length_cid.copy_from_slice(&buffer[0..8]);
+    let length_cid = u64::from_be_bytes(length_cid);
+
+    let mut cid = vec![0u8; length_cid as usize];
+    cid.copy_from_slice(&buffer[8..8+length_cid as usize]);
+
+    let endpoint = "http://127.0.0.1:5001".to_string();
+    let client = IpfsClient::from_str(&endpoint).unwrap();
+    let cid = Cid::try_from(cid).unwrap();
+
+    client.files_cp(&cid.to_string(), "/app-new").await.unwrap();
+    client.files_rm("/app", true).await.unwrap();
+    client.files_mv("/app-new", "/app");
+    HttpResponse::Ok().finish()
 }
 
 #[actix_web::get("/ipfs/get/{cid}")]
@@ -233,6 +304,29 @@ async fn ipfs_get(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpRes
             .body(data) 
         }
     }
+}
+
+#[actix_web::post("/hint")]
+async fn hint(payload: Bytes) -> HttpResponse {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write(&HINT.to_be_bytes()).unwrap();
+
+    let payload_len = payload.len();
+
+    file.seek(SeekFrom::Start(8)).unwrap();
+    file.write(&payload_len.to_be_bytes()).unwrap();
+
+    file.seek(SeekFrom::Start(16)).unwrap();
+    file.write(&payload.slice(0..payload.len())).unwrap();
+
+    file.sync_all().unwrap();
+
+    do_yield(HTIF_YIELD_REASON_PROGRESS);
+    HttpResponse::Ok().finish()
 }
 
 #[actix_web::head("/ipfs/has/{cid}")]
