@@ -154,21 +154,14 @@ async fn get_tx() -> HttpResponse {
 
     payload.copy_from_slice(&buffer[24 + length_cid..24 + length_cid + length_payload]);
 
-    let mut length_app_cid = [0u8; 8];
-
-    length_app_cid.copy_from_slice(&buffer[24 + length_cid + length_payload ..32 + length_cid + length_payload]);
-    let length_app_cid = u64::from_be_bytes(length_app_cid) as usize;
-
-    let mut app_cid = vec![0u8; length_app_cid as usize];
-    app_cid.copy_from_slice(&buffer[32 + length_cid + length_payload..32 + length_cid + length_payload + length_app_cid]);
-
     let endpoint = "http://127.0.0.1:5001".to_string();
     let client = IpfsClient::from_str(&endpoint).unwrap();
     let cid = Cid::try_from(cid).unwrap();
-    let app_cid = Cid::try_from(app_cid).unwrap();
 
+    let app_cid = client.files_stat("/state/app").await.unwrap().hash;
     let ipfs_app_cid = client.files_stat("/app").await.unwrap().hash;
     let ipfs_app_cid = Cid::try_from(ipfs_app_cid).unwrap();
+    let app_cid = Cid::try_from(app_cid).unwrap();
 
     assert_eq!(app_cid, ipfs_app_cid);
 
