@@ -166,9 +166,9 @@ async fn get_tx() -> HttpResponse {
     assert_eq!(app_cid, ipfs_app_cid);
 
     client.files_cp(&("/ipfs/".to_string() + &cid.to_string()), "/state-new").await.unwrap();
-    client.files_mv("/state", "/previous");
+    client.files_mv("/state", "/previous").await.unwrap();
     client.files_rm("/state", true).await.unwrap();
-    client.files_mv("/state-new", "/state");
+    client.files_mv("/state-new", "/state").await.unwrap();
 
     HttpResponse::Ok()
         .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
@@ -222,7 +222,7 @@ async fn get_app() -> HttpResponse {
 
     client.files_cp(&("/ipfs/".to_string() + &cid.to_string()), "/app-new").await.unwrap();
     client.files_rm("/app", true).await.unwrap();
-    client.files_mv("/app-new", "/app");
+    client.files_mv("/app-new", "/app").await.unwrap();
     HttpResponse::Ok().finish()
 }
 
