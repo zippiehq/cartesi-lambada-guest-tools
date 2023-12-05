@@ -129,26 +129,41 @@ async fn get_tx() -> HttpResponse {
 
     file.seek(SeekFrom::Start(0)).unwrap();
 
-    for i in (0..file_length).step_by(4096) {
-        let mut out_buf = Aligned([0; 4096 as usize]);
-        file.read_exact(&mut out_buf.0).unwrap();
-        buffer.extend_from_slice(&out_buf.0); 
-    }
-
-    assert_eq!(buffer.len() % 512, 0);
+    let mut out_buf = Aligned([0; 4096 as usize]);
+    file.read_exact(&mut out_buf.0).unwrap();
+    buffer.extend_from_slice(&out_buf.0);
 
     let mut length_cid = [0u8; 8];
 
     length_cid.copy_from_slice(&buffer[0..8]);
     let length_cid = u64::from_be_bytes(length_cid) as usize;
 
+    let buffer_len = (length_cid + 16 + 4095) & !4095;
+
+    for _ in (4096..buffer_len).step_by(4096) {
+        let mut out_buf = Aligned([0; 4096 as usize]);
+        file.read_exact(&mut out_buf.0).unwrap();
+        buffer.extend_from_slice(&out_buf.0); 
+    } 
+
+    assert_eq!(buffer.len() % 512, 0);
+
     let mut cid = vec![0u8; length_cid];
     cid.copy_from_slice(&buffer[8..8+length_cid]);
 
     let mut length_payload = [0u8; 8];
-
     length_payload.copy_from_slice(&buffer[16 + length_cid..16 + length_cid + 8]);
     let length_payload = u64::from_be_bytes(length_payload) as usize;
+
+    let buffer_len_with_payload = (length_cid + 16 + length_payload + 4095) & !4095;
+
+    for _ in (buffer_len..buffer_len_with_payload).step_by(4096) {
+        let mut out_buf = Aligned([0; 4096 as usize]);
+        file.read_exact(&mut out_buf.0).unwrap();
+        buffer.extend_from_slice(&out_buf.0); 
+    } 
+
+    assert_eq!(buffer.len() % 512, 0);
 
     let mut payload = vec![0u8; length_payload];
 
@@ -199,18 +214,24 @@ async fn get_app() -> HttpResponse {
 
     file.seek(SeekFrom::Start(0)).unwrap();
 
-    for i in (0..file_length).step_by(4096) {
-        let mut out_buf = Aligned([0; 4096 as usize]);
-        file.read_exact(&mut out_buf.0).unwrap();
-        buffer.extend_from_slice(&out_buf.0); 
-    }
-
-    assert_eq!(buffer.len() % 512, 0);
+    let mut out_buf = Aligned([0; 4096 as usize]);
+    file.read_exact(&mut out_buf.0).unwrap();
+    buffer.extend_from_slice(&out_buf.0);
 
     let mut length_cid = [0u8; 8];
 
     length_cid.copy_from_slice(&buffer[0..8]);
     let length_cid = u64::from_be_bytes(length_cid);
+
+    let buffer_len = (length_cid + 8 + 4095) & !4095;
+
+    for _ in (4096..buffer_len).step_by(4096) {
+        let mut out_buf = Aligned([0; 4096 as usize]);
+        file.read_exact(&mut out_buf.0).unwrap();
+        buffer.extend_from_slice(&out_buf.0); 
+    } 
+
+    assert_eq!(buffer.len() % 512, 0);
 
     let mut cid = vec![0u8; length_cid as usize];
     cid.copy_from_slice(&buffer[8..8+length_cid as usize]);
@@ -275,18 +296,24 @@ async fn ipfs_get(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpRes
 
             file.seek(SeekFrom::Start(0)).unwrap();
 
-            for i in (0..file_length).step_by(4096) {
-                let mut out_buf = Aligned([0; 4096 as usize]);
-                file.read_exact(&mut out_buf.0).unwrap();
-                buffer.extend_from_slice(&out_buf.0); 
-            }
-
-            assert_eq!(buffer.len() % 512, 0);
+            let mut out_buf = Aligned([0; 4096 as usize]);
+            file.read_exact(&mut out_buf.0).unwrap();
+            buffer.extend_from_slice(&out_buf.0);
 
             let mut length_buf = [0u8; 8];
             length_buf.copy_from_slice(&buffer[0..8]);
             let length = u64::from_be_bytes(length_buf);
             println!("length in buffer {:?}", length);
+
+            let buffer_len = (length + 16 + 4095) & !4095;
+
+            for _ in (4096..buffer_len).step_by(4096) {
+                let mut out_buf = Aligned([0; 4096 as usize]);
+                file.read_exact(&mut out_buf.0).unwrap();
+                buffer.extend_from_slice(&out_buf.0); 
+            } 
+        
+            assert_eq!(buffer.len() % 512, 0);
 
             let mut data = vec![0u8; length as usize];
             data.copy_from_slice(&buffer[16..16 + length as usize]);
