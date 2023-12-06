@@ -405,6 +405,34 @@ async fn exception(content: Bytes, data: Data<Mutex<Context>>) -> HttpResponse {
 /// and pass RollupFinish struct to linux rollup advance/inspect requests loop thread
 #[actix_web::post("/finish")]
 async fn finish(data: Data<Mutex<Context>>) -> HttpResponse {
+    let dir = std::env::var("STORE_DIR").unwrap();
+    let paths = std::fs::read_dir(dir).unwrap();
+
+    for path in paths {
+        let mut file = OpenOptions::new()
+        .read(true)
+        .open(path.unwrap().path()).unwrap();
+        let mut buffer = vec![];
+        file.read_to_end(&mut buffer).unwrap();
+
+        let mut file = OpenOptions::new()
+        .write(true)
+        .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.write(&WRITE_BLOCK.to_be_bytes()).unwrap();
+
+        let file_len = buffer.len().to_be_bytes();
+
+        file.seek(SeekFrom::Start(8)).unwrap();
+        file.write(&file_len).unwrap();
+
+        file.seek(SeekFrom::Start(16)).unwrap();
+        file.write(&buffer).unwrap();
+        file.sync_all().unwrap();
+
+        do_yield(HTIF_YIELD_REASON_PROGRESS);
+    }
 
     let mut file = OpenOptions::new()
     .write(true)
@@ -433,30 +461,6 @@ async fn finish(data: Data<Mutex<Context>>) -> HttpResponse {
 
     do_yield(HTIF_YIELD_REASON_PROGRESS);
 
-    let dir = std::env::var("STORE_DIR").unwrap();
-    let paths = std::fs::read_dir(dir).unwrap();
-
-    for path in paths {
-        let mut file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path.unwrap().path()).unwrap();
-        let mut buffer = vec![];
-        file.read_to_end(&mut buffer).unwrap();
-        file.seek(SeekFrom::Start(0)).unwrap();
-        file.write(&WRITE_BLOCK.to_be_bytes()).unwrap();
-
-        let file_len = buffer.len().to_be_bytes();
-
-        file.seek(SeekFrom::Start(8)).unwrap();
-        file.write(&file_len).unwrap();
-
-        file.seek(SeekFrom::Start(16)).unwrap();
-        file.write(&buffer).unwrap();
-        file.sync_all().unwrap();
-
-        do_yield(HTIF_YIELD_REASON_PROGRESS);
-    }
     HttpResponse::Ok().finish()
 }
 
