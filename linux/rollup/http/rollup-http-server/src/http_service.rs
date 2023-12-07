@@ -45,6 +45,7 @@ use std::{
 
 const HTIF_DEVICE_YIELD: u8 = 2;
 const HTIF_YIELD_AUTOMATIC: u8 = 0;
+const HTIF_YIELD_MANUAL: u8 = 1;
 const HTIF_YIELD_REASON_PROGRESS: u16 = 0;
 const HTIF_YIELD_REASON_EXCEPTION: u16 = 6;
 
@@ -471,7 +472,7 @@ fn do_yield(reason: u16) {
 
         let mut data = YieldRequest {
             dev: HTIF_DEVICE_YIELD,
-            cmd: HTIF_YIELD_AUTOMATIC,
+            cmd: HTIF_YIELD_MANUAL,
             reason,
             data: 0,
         };
