@@ -408,11 +408,12 @@ async fn exception(content: Bytes, data: Data<Mutex<Context>>) -> HttpResponse {
 async fn finish(data: Data<Mutex<Context>>) -> HttpResponse {
     let dir = std::env::var("STORE_DIR").unwrap();
     let paths = std::fs::read_dir(dir).unwrap();
+    let cache_dir = std::env::var("CACHE_DIR").unwrap();
 
     for path in paths {
         let mut file = OpenOptions::new()
         .read(true)
-        .open(path.unwrap().path()).unwrap();
+        .open(cache_dir.clone() + path.unwrap().file_name().to_str().unwrap()).unwrap();
         let mut buffer = vec![];
         file.read_to_end(&mut buffer).unwrap();
 
