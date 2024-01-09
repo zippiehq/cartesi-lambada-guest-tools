@@ -14,11 +14,68 @@
 // limitations under the License.
 //
 
+use std::fs::{File, OpenOptions};
+use std::io::{SeekFrom, Seek, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::io::RawFd;
 use std::sync::Arc;
 
 use async_mutex::Mutex;
+use nix::ioctl_readwrite;
 use tokio::process::Command;
+
+const EXCEPTION: u64 = 0x00002;
+#[repr(C)]
+pub struct YieldRequest {
+    dev: u8,
+    cmd: u8,
+    reason: u16,
+    data: u32,
+}
+ioctl_readwrite!(ioctl_yield, 0xd1, 0, YieldRequest);
+
+
+const HTIF_DEVICE_YIELD: u8 = 2;
+const HTIF_YIELD_AUTOMATIC: u8 = 0;
+const HTIF_YIELD_MANUAL: u8 = 1;
+const HTIF_YIELD_REASON_PROGRESS: u16 = 0;
+const HTIF_YIELD_REASON_EXCEPTION: u16 = 6;
+
+fn do_yield(reason: u16) {
+
+    let file = File::open("/dev/yield").unwrap();
+    let fd = file.as_raw_fd();
+
+    let mut data = YieldRequest {
+        dev: HTIF_DEVICE_YIELD,
+        cmd: HTIF_YIELD_MANUAL,
+        reason,
+        data: 0,
+    };
+
+    unsafe {
+        ioctl_yield(fd, &mut data).unwrap();
+    }
+}
+pub async fn do_exception(why: &str) {
+    let mut file = OpenOptions::new()
+    .write(true)
+    .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write(&EXCEPTION.to_be_bytes()).unwrap();
+
+    let exception_data = why.as_bytes();
+
+    let exception_length = why. len() as u64;
+    file.seek(SeekFrom::Start(8)).unwrap();
+    file.write(&exception_length.to_be_bytes()).unwrap();
+
+    file.seek(SeekFrom::Start(16)).unwrap();
+    file.write(&exception_data).unwrap();
+    file.sync_all().unwrap();
+
+    do_yield(HTIF_YIELD_REASON_EXCEPTION);
+}
 
 /// Execute the dapp command and throw a rollup exception if it fails or exits
 pub async fn run(args: Vec<String>) {
@@ -35,5 +92,5 @@ pub async fn run(args: Vec<String>) {
         Err(e) => format!("failed to spawn task with {}", e),
     };
     log::warn!("throwing exception because {}", message);
-    // TODO: do exception in new style
+    do_exception(&message).await;
 }
