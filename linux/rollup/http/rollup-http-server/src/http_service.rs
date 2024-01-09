@@ -94,14 +94,26 @@ pub async fn run(
     server.await
 }
 
-#[actix_web::put("/ipfs/put/{cid}")]
-async fn ipfs_put(content: Bytes, cid: web::Path<String>) -> HttpResponse {
-    let cid = cid.into_inner();
-    let mut file = File::create(&(std::env::var("CACHE_DIR").unwrap() + &cid)).expect("Failed to create file");
-    file.write_all(&content.to_vec())
-        .expect("Failed to write to file");
+#[actix_web::put("/ipfs/put")]
+async fn ipfs_put(content: Bytes) -> HttpResponse {
 
-    let file = File::create(&(std::env::var("STORE_DIR").unwrap() + &cid)).expect("Failed to create file");
+    let mut file = OpenOptions::new()
+    .write(true)
+    .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write(&WRITE_BLOCK.to_be_bytes()).unwrap();
+
+    let file_len = content.to_vec().len().to_be_bytes();
+
+    file.seek(SeekFrom::Start(8)).unwrap();
+    file.write(&file_len).unwrap();
+
+    file.seek(SeekFrom::Start(16)).unwrap();
+    file.write(&content.to_vec()).unwrap();
+    file.sync_all().unwrap();
+
+    do_yield(HTIF_YIELD_REASON_PROGRESS);
     HttpResponse::Ok().finish()
 }
 
@@ -251,80 +263,63 @@ async fn get_app() -> HttpResponse {
 #[actix_web::get("/ipfs/get/{cid}")]
 async fn ipfs_get(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpResponse {
     let cid = cid.into_inner();
-    match File::open(&(std::env::var("CACHE_DIR").unwrap() + &cid))
-    {
-        Ok(mut file) => {
-            let mut response = vec![];
-            match file.read_to_end(&mut response) {
-                Ok(_) => {
-                    HttpResponse::Ok().body(response)
-                },
-                Err(err) => {
-                    HttpResponse::BadRequest().body(format!("failed to get data: {:?}", err))
-                },
-            }
-        },
-        Err(err) =>{
+    let mut file = OpenOptions::new()
+    .write(true)
+    .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
 
-            let mut file = OpenOptions::new()
-            .write(true)
-            .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write(&READ_BLOCK.to_be_bytes()).unwrap();
+    let cid_bytes = Cid::try_from(cid).unwrap().to_bytes();
+    let cid_length = cid_bytes.len() as u64;
+    file.seek(SeekFrom::Start(8)).unwrap();
+    file.write(&cid_length.to_be_bytes()).unwrap();
+    file.seek(SeekFrom::Start(16)).unwrap();
+    file.write(&cid_bytes).unwrap();
 
-            file.seek(SeekFrom::Start(0)).unwrap();
-            file.write(&READ_BLOCK.to_be_bytes()).unwrap();
-            let cid_bytes = Cid::try_from(cid).unwrap().to_bytes();
-            let cid_length = cid_bytes.len() as u64;
-            file.seek(SeekFrom::Start(8)).unwrap();
-            file.write(&cid_length.to_be_bytes()).unwrap();
-            file.seek(SeekFrom::Start(16)).unwrap();
-            file.write(&cid_bytes).unwrap();
+    file.sync_all().unwrap();
 
-            file.sync_all().unwrap();
+    do_yield(HTIF_YIELD_REASON_PROGRESS);
 
-            do_yield(HTIF_YIELD_REASON_PROGRESS);
+    println!("back from yield");
 
-            println!("back from yield");
+    let mut file = OpenOptions::new()
+    .read(true)
+    .custom_flags(libc::O_DIRECT)
+    .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
 
-            let mut file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECT)
-            .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
+    file.seek(SeekFrom::End(0)).unwrap();
 
-            file.seek(SeekFrom::End(0)).unwrap();
+    let file_length = file.stream_position().unwrap() as usize;
 
-            let file_length = file.stream_position().unwrap() as usize;
+    let mut buffer: Vec<u8> = Vec::with_capacity(file_length);
 
-            let mut buffer: Vec<u8> = Vec::with_capacity(file_length);
+    file.seek(SeekFrom::Start(0)).unwrap();
 
-            file.seek(SeekFrom::Start(0)).unwrap();
+    let mut out_buf = Aligned([0; 4096 as usize]);
+    file.read_exact(&mut out_buf.0).unwrap();
+    buffer.extend_from_slice(&out_buf.0);
 
-            let mut out_buf = Aligned([0; 4096 as usize]);
-            file.read_exact(&mut out_buf.0).unwrap();
-            buffer.extend_from_slice(&out_buf.0);
+    let mut length_buf = [0u8; 8];
+    length_buf.copy_from_slice(&buffer[0..8]);
+    let length = u64::from_be_bytes(length_buf);
+    println!("length in buffer {:?}", length);
 
-            let mut length_buf = [0u8; 8];
-            length_buf.copy_from_slice(&buffer[0..8]);
-            let length = u64::from_be_bytes(length_buf);
-            println!("length in buffer {:?}", length);
+    let buffer_len = (length + 16 + 4095) & !4095;
 
-            let buffer_len = (length + 16 + 4095) & !4095;
-
-            for _ in (4096..buffer_len).step_by(4096) {
-                let mut out_buf = Aligned([0; 4096 as usize]);
-                file.read_exact(&mut out_buf.0).unwrap();
-                buffer.extend_from_slice(&out_buf.0); 
-            } 
+    for _ in (4096..buffer_len).step_by(4096) {
+        let mut out_buf = Aligned([0; 4096 as usize]);
+        file.read_exact(&mut out_buf.0).unwrap();
+        buffer.extend_from_slice(&out_buf.0); 
+    } 
         
-            assert_eq!(buffer.len() % 512, 0);
+    assert_eq!(buffer.len() % 512, 0);
 
-            let mut data = vec![0u8; length as usize];
-            data.copy_from_slice(&buffer[16..16 + length as usize]);
+    let mut data = vec![0u8; length as usize];
+    data.copy_from_slice(&buffer[16..16 + length as usize]);
 
-            HttpResponse::Ok()
-            .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
-            .body(data) 
-        }
-    }
+    HttpResponse::Ok()
+    .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
+    .body(data) 
 }
 
 #[actix_web::post("/hint")]
@@ -407,35 +402,6 @@ async fn exception(content: Bytes, data: Data<Mutex<Context>>) -> HttpResponse {
 /// and pass RollupFinish struct to linux rollup advance/inspect requests loop thread
 #[actix_web::post("/finish")]
 async fn finish(data: Data<Mutex<Context>>) -> HttpResponse {
-    let dir = std::env::var("STORE_DIR").unwrap();
-    let paths = std::fs::read_dir(dir).unwrap();
-    let cache_dir = std::env::var("CACHE_DIR").unwrap();
-
-    for path in paths {
-        let mut file = OpenOptions::new()
-        .read(true)
-        .open(cache_dir.clone() + path.unwrap().file_name().to_str().unwrap()).unwrap();
-        let mut buffer = vec![];
-        file.read_to_end(&mut buffer).unwrap();
-
-        let mut file = OpenOptions::new()
-        .write(true)
-        .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
-
-        file.seek(SeekFrom::Start(0)).unwrap();
-        file.write(&WRITE_BLOCK.to_be_bytes()).unwrap();
-
-        let file_len = buffer.len().to_be_bytes();
-
-        file.seek(SeekFrom::Start(8)).unwrap();
-        file.write(&file_len).unwrap();
-
-        file.seek(SeekFrom::Start(16)).unwrap();
-        file.write(&buffer).unwrap();
-        file.sync_all().unwrap();
-
-        do_yield(HTIF_YIELD_REASON_PROGRESS);
-    }
 
     let mut file = OpenOptions::new()
     .write(true)
