@@ -94,9 +94,9 @@ pub async fn run(
     server.await
 }
 
-#[actix_web::put("/ipfs/put")]
-async fn ipfs_put(content: Bytes) -> HttpResponse {
-
+#[actix_web::put("/ipfs/put/{cid}")]
+async fn ipfs_put(content: Bytes, cid: web::Path<String>) -> HttpResponse {
+    
     let mut file = OpenOptions::new()
     .write(true)
     .open(std::env::var("IO_DEVICE").unwrap()).unwrap();
