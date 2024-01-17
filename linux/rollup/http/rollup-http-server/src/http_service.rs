@@ -192,7 +192,7 @@ async fn get_tx() -> HttpResponse {
     client.files_rm("/state", true).await.unwrap();
     client.files_mv("/state-new", "/state").await.unwrap();
     
-    let app_cid = client.files_stat("/state/app").await.unwrap().hash;
+    let app_cid = client.files_stat("/state/gov/app").await.unwrap().hash;
     let ipfs_app_cid = client.files_stat("/app").await.unwrap().hash;
     let ipfs_app_cid = Cid::try_from(ipfs_app_cid).unwrap();
     let app_cid = Cid::try_from(app_cid).unwrap();
