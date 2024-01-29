@@ -34,6 +34,9 @@ use std::io::{Seek, SeekFrom};
 
 use std::os::unix::io::AsRawFd;
 use nix::{ioctl_readwrite, fcntl::OFlag};
+use sha2::{Sha256, Digest};
+use std::env;
+
 
 #[repr(align(4096))]
 struct Aligned([u8; 4096 as usize]);
