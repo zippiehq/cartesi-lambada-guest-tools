@@ -34,6 +34,9 @@ use std::io::{Seek, SeekFrom};
 
 use std::os::unix::io::AsRawFd;
 use nix::{ioctl_readwrite, fcntl::OFlag};
+use sha2::{Sha256, Digest};
+use std::env;
+
 
 #[repr(align(4096))]
 struct Aligned([u8; 4096 as usize]);
@@ -56,6 +59,7 @@ const FINISH: u64 = 0x00004;
 const WRITE_BLOCK: u64 = 0x000005;
 const GET_APP: u64 = 0x00006;
 const HINT: u64 = 0x00007;
+const GET_METADATA: u64 = 0x00008;
 
 
 /// Create new instance of http server
@@ -76,6 +80,7 @@ pub fn create_server(
             .service(get_tx)
             .service(get_app)
             .service(hint)
+            .service(get_metadata)
     })
     .bind((config.http_address.as_str(), config.http_port))
     .map(|t| t)?
@@ -258,6 +263,67 @@ async fn get_app() -> HttpResponse {
     client.files_rm("/app", true).await.unwrap();
     client.files_mv("/app-new", "/app").await.unwrap();
     HttpResponse::Ok().finish()
+}
+
+#[actix_web::get("/metadata/{text}")]
+async fn get_metadata(text: web::Path<String>, data: web::Data<Mutex<Context>>) -> HttpResponse {
+    let mut hasher = Sha256::new();
+    hasher.update(text.as_bytes());
+    let hash_result = hasher.finalize(); 
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .open(env::var("IO_DEVICE").unwrap()).unwrap();
+
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write(&GET_METADATA.to_be_bytes()).unwrap();
+    let hash_length = hash_result.len() as u64;
+    file.seek(SeekFrom::Start(8)).unwrap();
+    file.write(&hash_length.to_be_bytes()).unwrap();
+    file.seek(SeekFrom::Start(16)).unwrap();
+    file.write(&hash_result).unwrap();
+
+    file.sync_all().unwrap();
+
+    do_yield(HTIF_YIELD_REASON_PROGRESS);
+
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECT)
+        .open(env::var("IO_DEVICE").unwrap()).unwrap();
+
+    file.seek(SeekFrom::End(0)).unwrap();
+
+    let file_length = file.stream_position().unwrap() as usize;
+
+    let mut buffer: Vec<u8> = Vec::with_capacity(file_length);
+
+    file.seek(SeekFrom::Start(0)).unwrap();
+
+    let mut out_buf = Aligned([0; 4096 as usize]);
+    file.read_exact(&mut out_buf.0).unwrap();
+    buffer.extend_from_slice(&out_buf.0);
+
+    let mut length_buf = [0u8; 8];
+    length_buf.copy_from_slice(&buffer[0..8]);
+    let length = u64::from_be_bytes(length_buf);
+
+    let buffer_len = (length + 16 + 4095) & !4095;
+
+    for _ in (4096..buffer_len).step_by(4096) {
+        let mut out_buf = Aligned([0; 4096 as usize]);
+        file.read_exact(&mut out_buf.0).unwrap();
+        buffer.extend_from_slice(&out_buf.0);
+    }
+
+    assert_eq!(buffer.len() % 512, 0);
+
+    let mut data = vec![0u8; length as usize];
+    data.copy_from_slice(&buffer[16..16 + length as usize]);
+
+    HttpResponse::Ok()
+        .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
+        .body(data)
 }
 
 #[actix_web::get("/ipfs/get/{cid}")]
