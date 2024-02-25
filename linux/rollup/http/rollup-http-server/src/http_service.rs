@@ -60,8 +60,9 @@ const WRITE_BLOCK: u64 = 0x000005;
 const GET_APP: u64 = 0x00006;
 const HINT: u64 = 0x00007;
 const GET_METADATA: u64 = 0x00008;
+const GET_DATA: u64 = 0x00009;
 
-
+const NAMESPACE_KECCAK256: u64 = 0x2;
 /// Create new instance of http server
 pub fn create_server(
     config: &Config,
@@ -81,6 +82,8 @@ pub fn create_server(
             .service(get_app)
             .service(hint)
             .service(get_metadata)
+            .service(get_data)
+            
     })
     .bind((config.http_address.as_str(), config.http_port))
     .map(|t| t)?
@@ -265,6 +268,68 @@ async fn get_app() -> HttpResponse {
     HttpResponse::Ok().finish()
 }
 
+#[actix_web::get("/get_data/{namespace}/{data_id}")]
+async fn get_data(path: web::Path<(String, String)>, data: web::Data<Mutex<Context>>) -> HttpResponse {
+    let (namespace, data_id) = path.into_inner();
+    let data_id_as_bytes = data_id.as_bytes();
+
+    let mut file = OpenOptions::new()
+        .write(true)
+        .open(env::var("IO_DEVICE").unwrap()).unwrap();
+
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write(&GET_DATA.to_be_bytes()).unwrap();
+    file.seek(SeekFrom::Start(8)).unwrap();
+    file.write(&NAMESPACE_KECCAK256.to_be_bytes()).unwrap();
+    let data_id_length = data_id_as_bytes.len() as u64;
+    file.seek(SeekFrom::Start(16)).unwrap();
+    file.write(&data_id_length.to_be_bytes()).unwrap();
+    file.seek(SeekFrom::Start(24)).unwrap();
+    file.write(&data_id_as_bytes).unwrap();
+
+    file.sync_all().unwrap();
+
+    do_yield(HTIF_YIELD_REASON_PROGRESS);
+
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECT)
+        .open(env::var("IO_DEVICE").unwrap()).unwrap();
+
+    file.seek(SeekFrom::End(0)).unwrap();
+
+    let file_length = file.stream_position().unwrap() as usize;
+
+    let mut buffer: Vec<u8> = Vec::with_capacity(file_length);
+
+    file.seek(SeekFrom::Start(0)).unwrap();
+
+    let mut out_buf = Aligned([0; 4096 as usize]);
+    file.read_exact(&mut out_buf.0).unwrap();
+    buffer.extend_from_slice(&out_buf.0);
+
+    let mut length_buf = [0u8; 8];
+    length_buf.copy_from_slice(&buffer[0..8]);
+    let length = u64::from_be_bytes(length_buf);
+
+    let buffer_len = (length + 16 + 4095) & !4095;
+
+    for _ in (4096..buffer_len).step_by(4096) {
+        let mut out_buf = Aligned([0; 4096 as usize]);
+        file.read_exact(&mut out_buf.0).unwrap();
+        buffer.extend_from_slice(&out_buf.0);
+    }
+
+    assert_eq!(buffer.len() % 512, 0);
+
+    let mut data = vec![0u8; length as usize];
+    data.copy_from_slice(&buffer[16..16 + length as usize]);
+
+    HttpResponse::Ok()
+        .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
+        .body(data)
+    
+}
 #[actix_web::get("/metadata/{text}")]
 async fn get_metadata(text: web::Path<String>, data: web::Data<Mutex<Context>>) -> HttpResponse {
     let mut hasher = Sha256::new();
