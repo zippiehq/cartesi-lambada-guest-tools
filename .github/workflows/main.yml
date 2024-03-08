@@ -1,7 +1,7 @@
 name: Build
 on: [push]
 env:
-  TOOLCHAIN_IMAGE: ${{ github.repository_owner }}/toolchain
+  TOOLCHAIN_IMAGE: cartesi/toolchain
   TOOLCHAIN_TAG: 0.15.0
 jobs:
   tools:
@@ -10,19 +10,6 @@ jobs:
       - uses: actions/checkout@v3
         with:
           submodules: recursive
-
-      - name: Login to GHCR
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Export makefile variables
         run: make env >> $GITHUB_ENV
@@ -37,7 +24,7 @@ jobs:
         id: docker_meta
         uses: docker/metadata-action@v4
         with:
-          images: ${{ secrets.DOCKER_ORGANIZATION }}/machine-emulator-tools
+          images: zippiehq/lambada-guest-tools
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -85,43 +72,3 @@ jobs:
           files: |
             ${{ env.MACHINE_EMULATOR_TOOLS_TAR_GZ }}
             ${{ env.MACHINE_EMULATOR_TOOLS_DEB }}
-
-  build:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: recursive
-
-      - name: Login to GHCR
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Build yield tool
-        run: cd linux/htif && make toolchain-exec CONTAINER_COMMAND="/usr/bin/make yield.toolchain"
-
-      - name: Build ioctl-echo-loop tool
-        run: cd linux/rollup/ioctl-echo-loop && make toolchain-exec CONTAINER_COMMAND="/usr/bin/make ioctl-echo-loop.toolchain"
-
-      - name: Build rollup tool
-        run: cd linux/rollup/rollup && make toolchain-exec CONTAINER_COMMAND="/usr/bin/make rollup.toolchain"
-
-      - name: Build rollup http server
-        run: cd linux/rollup/http/rollup-http-server && ./build.sh
-
-      - name: Build echo dapp
-        run: cd linux/rollup/http/echo-dapp && ./build.sh
-
-      - name: Test rollup-http-server and echo-dapp client
-        run: |
-          cd linux/rollup/http/rollup-http-server
-          USE_ROLLUP_BINDINGS_MOCK=1 cargo test -- --show-output --test-threads=1
