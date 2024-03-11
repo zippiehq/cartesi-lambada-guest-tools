@@ -19,12 +19,14 @@ extern crate rollup_http_server;
 
 use actix_server::ServerHandle;
 use async_mutex::Mutex;
+use futures::StreamExt;
 use rollup_http_client::rollup::{
     Exception, Notice, Report, RollupRequest, RollupResponse, Voucher
 };
 use rollup_http_server::config::Config;
 use rollup_http_server::*;
 use rstest::*;
+use std::error::Error;
 use std::fs::File;
 use std::future::Future;
 use std::os::unix::io::{IntoRawFd, RawFd};
@@ -36,6 +38,10 @@ use nix::fcntl::OFlag;
 use std::io::Seek;
 use std::io::Read;
 use std::io::Write;
+use ipfs_api_backend_hyper::{IpfsApi, IpfsClient, TryFromUri};
+use std::io::Cursor;
+use actix_web::web::BytesMut;
+
 #[repr(align(4096))]
 struct Aligned([u8; 4096 as usize]);
 
@@ -82,7 +88,7 @@ fn run_test_http_service(
         http_port: port,
     };
     println!("Creating http server");
-    let server = http_service::create_server(&http_config, rollup_fd)?;
+    let server = http_service::create_server(&http_config)?;
     let server_handle = server.handle();
     println!("Spawning http server");
     tokio::spawn(server);
@@ -434,5 +440,44 @@ async fn test_exception_throw(
     );
     println!("Removing exception text file");
     std::fs::remove_file("test_exception_1.txt")?;
+    Ok(())
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_ipfs_interactions() -> Result<(), Box<dyn std::error::Error>> {
+    let client = IpfsClient::default();
+
+    let base_path = "/state/kv";
+    let key = "test_key";
+    let content = "Hello";
+    let key_path = format!("{}/{}", base_path, key);
+
+    client.files_mkdir(base_path, true).await.expect("Failed to create base directory");
+
+    client.files_write(&key_path, true, true, Cursor::new(content.as_bytes())).await.expect("Failed to write initial value to IPFS");
+
+    client.files_write(&key_path, true, true, Cursor::new(content.as_bytes())).await.expect("Failed to overwrite value in IPFS");
+
+    let mut read_stream = client.files_read(&key_path);
+    let mut bytes = BytesMut::new();
+    while let Some(chunk) = read_stream.next().await {
+        let chunk = chunk.expect("Failed to read chunk from stream");
+        bytes.extend_from_slice(&chunk);
+    }
+    assert_eq!(std::str::from_utf8(&bytes)?, content, "The written and read content do not match");
+
+    client.files_rm(&key_path, true).await.expect("Failed to remove file from IPFS");
+
+    let mut read_stream = client.files_read(&key_path);
+    let mut found_data = false;
+    while let Some(chunk) = read_stream.next().await {
+        if chunk.is_ok() {
+            found_data = true;
+            break;
+        }
+    }
+    assert!(!found_data, "Expected no data for reading deleted value, but got some");
+
     Ok(())
 }

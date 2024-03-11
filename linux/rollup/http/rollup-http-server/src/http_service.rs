@@ -19,6 +19,7 @@ extern crate nix;
 use std::os::unix::io::RawFd;
 use std::sync::Arc;
 
+use actix_web::web::BytesMut;
 use actix_web::{web, middleware::Logger, web::Data, web::Bytes, web::Json, App, HttpResponse, HttpServer};
 use async_mutex::Mutex;
 use serde::{Deserialize, Serialize};
@@ -29,13 +30,14 @@ use std::os::fd::FromRawFd;
 use std::io::{Write, Read};
 use cid::Cid;
 use ipfs_api_backend_hyper::{IpfsApi, IpfsClient,TryFromUri};
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use std::io::{Seek, SeekFrom};
 
 use std::os::unix::io::AsRawFd;
 use nix::{ioctl_readwrite, fcntl::OFlag};
 use sha2::{Sha256, Digest};
 use std::env;
+use std::io::Cursor;
 
 
 #[repr(align(4096))]
@@ -83,6 +85,9 @@ pub fn create_server(
             .service(hint)
             .service(get_metadata)
             .service(get_data)
+            .service(get_state)
+            .service(set_state)
+            .service(delete_state)
             
     })
     .bind((config.http_address.as_str(), config.http_port))
@@ -451,6 +456,50 @@ async fn ipfs_get(cid: web::Path<String>, data: Data<Mutex<Context>>) -> HttpRes
     HttpResponse::Ok()
     .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
     .body(data) 
+}
+
+#[actix_web::post("/set_state/{key}")]
+async fn set_state(key: web::Path<String>, body: Bytes) -> HttpResponse {
+    let client = IpfsClient::from_str("http://127.0.0.1:5001").unwrap();
+    let base_path = "/state/kv";
+    let _ = client.files_mkdir(base_path, true).await;
+    let key_path = format!("{}/{}", base_path, key.into_inner());
+    
+    let reader = Cursor::new(body);
+    
+    match client.files_write(&key_path, true, true, reader).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+#[actix_web::get("/get_state/{key}")]
+async fn get_state(key: web::Path<String>) -> HttpResponse {
+    let client = IpfsClient::from_str("http://127.0.0.1:5001").unwrap();
+    let key_path = format!("/state/kv/{}", key.into_inner());
+
+    let stream = client.files_read(&key_path);
+    let result = stream.fold(BytesMut::new(), |mut acc, item| async move {
+        match item {
+            Ok(chunk) => {
+                acc.extend_from_slice(&chunk);
+                acc
+            },
+            Err(_) => acc,
+        }
+    }).await;
+
+    HttpResponse::Ok().content_type("application/octet-stream").body(result.freeze())
+}
+
+#[actix_web::delete("/delete_state/{key}")]
+async fn delete_state(key: web::Path<String>) -> HttpResponse {
+    let client = IpfsClient::from_str("http://127.0.0.1:5001").unwrap();
+    let key_path = format!("/state/kv/{}", key.into_inner());
+    match client.files_rm(&key_path, true).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
 }
 
 #[actix_web::post("/hint")]
