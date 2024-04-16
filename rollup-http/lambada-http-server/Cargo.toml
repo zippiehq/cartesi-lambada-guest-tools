@@ -1,0 +1,25 @@
+[package]
+name = "lambada-http-server"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+hex = "0.4"
+tokio = { version = "1.14", features = ["macros", "time", "rt-multi-thread", "process"] }
+hyper = { version = "0.14", features = ["http1", "runtime", "client"] }
+serde = { version = "1.0", features = ["derive"]}
+serde_json = "1.0"
+log = "0.4"
+actix-web = "4.0.0-rc.2"
+validator = { version = "0.16", features = ["derive"] }
+cid = "0.11.0"
+ipfs-api-backend-hyper = { version = "0.6.0", features = ["with-send-sync"], default-features = false }
+actix-server = "2.0"
+futures = "0.3.29"
+env_logger = "0.9"
+getopts = "0.2"
+rollup-http-client = {path = "../rollup-http-client"}
+test_gio_server = {path = "../test_gio_server"}
+rstest = "0.12"
