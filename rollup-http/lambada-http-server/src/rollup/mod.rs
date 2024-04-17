@@ -34,7 +34,7 @@ pub struct GIOResponse {
     pub response: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Exception {
     pub payload: String,
 }

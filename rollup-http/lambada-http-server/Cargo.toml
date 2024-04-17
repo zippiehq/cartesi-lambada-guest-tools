@@ -23,3 +23,4 @@ getopts = "0.2"
 rollup-http-client = {path = "../rollup-http-client"}
 test_gio_server = {path = "../test_gio_server"}
 rstest = "0.12"
+sha3 = "0.10.8"

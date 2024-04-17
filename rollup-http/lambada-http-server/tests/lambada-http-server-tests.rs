@@ -18,6 +18,7 @@ extern crate lambada_http_server;
 extern crate rollup_http_client;
 extern crate test_gio_server;
 use actix_server::ServerHandle;
+use hyper::StatusCode;
 use lambada_http_server::config::Config;
 use lambada_http_server::*;
 use rollup_http_client::rollup::GIORequest;
@@ -182,4 +183,142 @@ async fn test_commit_state(
     context.lambada_server_handle.stop(true).await;
     drop(server_task);
     Ok(())
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_metadata(
+    context_future: impl Future<Output = Context>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (tx, rx) = oneshot::channel();
+    let server_task = task::spawn(start_server(tx));
+    let _ = rx.await.expect("Server failed to start");
+    let context = context_future.await;
+    let client = hyper::Client::new();
+    let req = hyper::Request::builder()
+        .method(hyper::Method::GET)
+        .header(hyper::header::CONTENT_TYPE, "application/json")
+        .uri(context.lambada_address.clone() + "/metadata/some_test_text")
+        .body(hyper::Body::empty())
+        .expect("metadata request");
+    match client.request(req).await {
+        Ok(res) => {
+            let body = hyper::body::to_bytes(res)
+                .await
+                .expect("error get response from rollup_http_server qio request")
+                .to_vec();
+            println!("output {:?}", String::from_utf8(body.clone()));
+        }
+        Err(e) => {
+            println!(
+                "failed to send metadata request to lambada http server: {}",
+                e
+            );
+        }
+    }
+    context.lambada_server_handle.stop(true).await;
+    drop(server_task);
+    Ok(())
+}
+
+#[rstest]
+#[tokio::test]
+async fn test_get_data(
+    context_future: impl Future<Output = Context>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (tx, rx) = oneshot::channel();
+    let server_task = task::spawn(start_server(tx));
+    let _ = rx.await.expect("Server failed to start");
+    let context = context_future.await;
+
+    let client = hyper::Client::new();
+    let req = hyper::Request::builder()
+        .method(hyper::Method::GET)
+        .header(hyper::header::CONTENT_TYPE, "application/json")
+        .uri(context.lambada_address.clone() + "/get_data/keccak256/data_id")
+        .body(hyper::Body::empty())
+        .expect("get_data request");
+    match client.request(req).await {
+        Ok(res) => {
+            println!("output {:?}", res);
+            match res.status() {
+                StatusCode::BAD_REQUEST => {
+                    let body = hyper::body::to_bytes(res)
+                        .await
+                        .expect("error get response from rollup_http_server qio request")
+                        .to_vec();
+                    println!("error {:?}", String::from_utf8(body.clone()));
+                    context.lambada_server_handle.stop(true).await;
+                    drop(server_task);
+                    panic!()
+                }
+                _ => {
+                    let body = hyper::body::to_bytes(res)
+                        .await
+                        .expect("error get response from rollup_http_server qio request")
+                        .to_vec();
+                    println!("output {:?}", String::from_utf8(body.clone()));
+                }
+            }
+        }
+        Err(e) => {
+            println!(
+                "failed to send get_data request to lambada http server: {}",
+                e
+            );
+        }
+    }
+    context.lambada_server_handle.stop(true).await;
+    drop(server_task);
+    Ok(())
+}
+
+#[rstest]
+#[tokio::test]
+#[should_panic]
+async fn test_get_data_fail(context_future: impl Future<Output = Context>) {
+    let (tx, rx) = oneshot::channel();
+    let server_task = task::spawn(start_server(tx));
+    let _ = rx.await.expect("Server failed to start");
+    let context = context_future.await;
+
+    let client = hyper::Client::new();
+    let req = hyper::Request::builder()
+        .method(hyper::Method::GET)
+        .header(hyper::header::CONTENT_TYPE, "application/json")
+        .uri(context.lambada_address.clone() + "/get_data/namespace/data_id")
+        .body(hyper::Body::empty())
+        .expect("get_data request");
+    match client.request(req).await {
+        Ok(res) => {
+            println!("output {:?}", res);
+            match res.status() {
+                StatusCode::BAD_REQUEST => {
+                    let body = hyper::body::to_bytes(res)
+                        .await
+                        .expect("error get response from rollup_http_server qio request")
+                        .to_vec();
+                    println!("error {:?}", String::from_utf8(body.clone()));
+                    context.lambada_server_handle.stop(true).await;
+                    drop(server_task);
+                    panic!()
+                }
+                _ => {
+                    let body = hyper::body::to_bytes(res)
+                        .await
+                        .expect("error get response from rollup_http_server qio request")
+                        .to_vec();
+                    println!("output {:?}", String::from_utf8(body.clone()));
+                }
+            }
+        }
+        Err(e) => {
+            println!(
+                "failed to send get_data request to lambada http server: {}",
+                e
+            );
+        }
+    }
+    context.lambada_server_handle.stop(true).await;
+    drop(server_task);
 }

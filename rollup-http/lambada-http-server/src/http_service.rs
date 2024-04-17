@@ -24,10 +24,14 @@ use actix_web::{middleware::Logger, App, HttpResponse, HttpServer};
 use cid::Cid;
 use futures::StreamExt;
 use ipfs_api_backend_hyper::{IpfsApi, IpfsClient, TryFromUri};
+use sha3::{Digest, Sha3_256};
 use std::io::Cursor;
 use tokio::sync::Notify;
+
 const CURRENT_STATE_CID: u16 = 0x20;
 const SET_STATE_CID: u16 = 0x21;
+const METADATA: u16 = 0x22;
+const KECCAK256_NAMESPACE: u16 = 0x23;
 
 /// Create new instance of http server
 pub fn create_server(config: &Config) -> std::io::Result<actix_server::Server> {
@@ -39,6 +43,8 @@ pub fn create_server(config: &Config) -> std::io::Result<actix_server::Server> {
             .service(delete_state)
             .service(set_state)
             .service(get_state)
+            .service(get_metadata)
+            .service(get_data)
     })
     .bind((config.http_address.as_str(), config.http_port))
     .map(|t| t)?
@@ -206,6 +212,95 @@ async fn commit_state() -> HttpResponse {
         Err(e) => {
             log::error!("failed to handle commit_state request: {}", e);
             HttpResponse::BadRequest().body(format!("Failed to handle commit_state request: {}", e))
+        }
+    }
+}
+
+#[actix_web::get("/metadata/{text}")]
+async fn get_metadata(text: web::Path<String>) -> HttpResponse {
+    let mut hasher = Sha3_256::new();
+    hasher.update(text.as_bytes());
+    let hash_result = hasher.finalize();
+
+    let gio_request = GIORequest {
+        domain: METADATA,
+        payload: hex::encode(hash_result),
+    };
+    let client = hyper::Client::new();
+
+    let req = hyper::Request::builder()
+        .method(hyper::Method::POST)
+        .header(hyper::header::CONTENT_TYPE, "application/json")
+        .uri("http://127.0.0.1:5004/gio")
+        .body(hyper::Body::from(
+            serde_json::to_string(&gio_request).unwrap(),
+        ))
+        .expect("gio request");
+
+    match client.request(req).await {
+        Ok(gio_response) => {
+            let gio_response = serde_json::from_slice::<GIOResponse>(
+                &hyper::body::to_bytes(gio_response)
+                    .await
+                    .expect("error get response from rollup_http_server qio request")
+                    .to_vec(),
+            )
+            .unwrap();
+
+            HttpResponse::Ok()
+                .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
+                .body(gio_response.response)
+        }
+        Err(e) => {
+            log::error!("failed to handle get_metadata request: {}", e);
+            HttpResponse::BadRequest().body(format!("Failed to handle get_metadata request: {}", e))
+        }
+    }
+}
+
+#[actix_web::get("/get_data/{namespace}/{data_id}")]
+async fn get_data(path: web::Path<(String, String)>) -> HttpResponse {
+    let (namespace, data_id) = path.into_inner();
+    let data_id_as_bytes = data_id.as_bytes();
+
+    if !namespace.eq("keccak256") {
+        log::error!("failed to handle get_data request: namespace should be keccak256");
+        return HttpResponse::BadRequest()
+            .body("Failed to handle get_data request: namespace should be keccak256");
+    }
+
+    let gio_request = GIORequest {
+        domain: KECCAK256_NAMESPACE,
+        payload: hex::encode(data_id_as_bytes),
+    };
+    let client = hyper::Client::new();
+
+    let req = hyper::Request::builder()
+        .method(hyper::Method::POST)
+        .header(hyper::header::CONTENT_TYPE, "application/json")
+        .uri("http://127.0.0.1:5004/gio")
+        .body(hyper::Body::from(
+            serde_json::to_string(&gio_request).unwrap(),
+        ))
+        .expect("gio request");
+
+    match client.request(req).await {
+        Ok(gio_response) => {
+            let gio_response = serde_json::from_slice::<GIOResponse>(
+                &hyper::body::to_bytes(gio_response)
+                    .await
+                    .expect("error get response from rollup_http_server qio request")
+                    .to_vec(),
+            )
+            .unwrap();
+
+            HttpResponse::Ok()
+                .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
+                .body(gio_response.response)
+        }
+        Err(e) => {
+            log::error!("failed to handle get_data request: {}", e);
+            HttpResponse::BadRequest().body(format!("Failed to handle get_data request: {}", e))
         }
     }
 }
