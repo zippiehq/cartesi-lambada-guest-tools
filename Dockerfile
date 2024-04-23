@@ -125,11 +125,28 @@ RUN cd ${BUILD_BASE}/tools/rollup-http/rollup-http-server && \
     echo "pub fn dummy() {}" > src/lib.rs && \
     cargo build --target riscv64gc-unknown-linux-gnu --release
 
+FROM rust-builder as lambada-server-dep-builder
+COPY --chown=developer:developer rollup-http/lambada-http-server/Cargo.toml rollup-http/lambada-http-server/Cargo.lock ${BUILD_BASE}/tools/rollup-http/lambada-http-server/
+COPY --chown=developer:developer rollup-http/test_gio_server/Cargo.toml rollup-http/test_gio_server/src ${BUILD_BASE}/tools/rollup-http/test_gio_server/
+COPY --chown=developer:developer rollup-http/test_gio_server/src ${BUILD_BASE}/tools/rollup-http/test_gio_server/src/
+RUN ls -lR  ${BUILD_BASE}/tools/
+RUN cd ${BUILD_BASE}/tools/rollup-http/lambada-http-server && \
+    mkdir src/ && \
+    echo "fn main() {}" > src/main.rs && \
+    echo "pub fn dummy() {}" > src/lib.rs && \
+    cargo build --target riscv64gc-unknown-linux-gnu --release
+
 # build rollup-http-server
 FROM http-server-dep-builder as http-server-builder
 COPY --chown=developer:developer rollup-http/rollup-http-server/build.rs ${BUILD_BASE}/tools/rollup-http/rollup-http-server/
 COPY --chown=developer:developer rollup-http/rollup-http-server/src ${BUILD_BASE}/tools/rollup-http/rollup-http-server/src
 RUN cd ${BUILD_BASE}/tools/rollup-http/rollup-http-server && touch build.rs src/* && \
+    cargo build --target riscv64gc-unknown-linux-gnu --release
+
+FROM lambada-server-dep-builder as lambada-server-builder
+COPY --chown=developer:developer rollup-http/lambada-http-server/src ${BUILD_BASE}/tools/rollup-http/lambada-http-server/src
+COPY --chown=developer:developer rollup-http/lambada-http-server/tests ${BUILD_BASE}/tools/rollup-http/lambada-http-server/tests
+RUN cd ${BUILD_BASE}/tools/rollup-http/lambada-http-server && touch src/* tests/* && \
     cargo build --target riscv64gc-unknown-linux-gnu --release
 
 # build echo-dapp dependencies
@@ -170,6 +187,7 @@ COPY --from=c-builder ${BUILD_BASE}/tools/sys-utils/yield/yield ${STAGING_SBIN}
 COPY --from=c-builder ${BUILD_BASE}/tools/sys-utils/misc/* ${STAGING_BIN}
 COPY --from=rust-builder ${BUILD_BASE}/tools/rollup-http/rollup-init/rollup-init ${STAGING_SBIN}
 COPY --from=http-server-builder ${BUILD_BASE}/tools/rollup-http/rollup-http-server/target/riscv64gc-unknown-linux-gnu/release/rollup-http-server ${STAGING_BIN}
+COPY --from=lambada-server-builder ${BUILD_BASE}/tools/rollup-http/lambada-http-server/target/riscv64gc-unknown-linux-gnu/release/lambada-http-server ${STAGING_BIN}
 COPY --from=echo-dapp-builder ${BUILD_BASE}/tools/rollup-http/echo-dapp/target/riscv64gc-unknown-linux-gnu/release/echo-dapp ${STAGING_BIN}
 
 RUN dpkg-deb -Zxz --root-owner-group --build ${STAGING_BASE} ${BUILD_BASE}/${TOOLS_DEB}
