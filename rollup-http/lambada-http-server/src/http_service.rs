@@ -121,7 +121,7 @@ async fn get_state(key: web::Path<String>) -> HttpResponse {
 async fn open_state() -> HttpResponse {
     let gio_request = GIORequest {
         domain: CURRENT_STATE_CID,
-        payload: String::new(),
+        payload: "0x".to_string(),
     };
 
     let client = hyper::Client::new();
@@ -186,7 +186,7 @@ async fn commit_state() -> HttpResponse {
 
     let gio_request = GIORequest {
         domain: SET_STATE_CID,
-        payload: hex::encode(cid_bytes),
+        payload: format!("0x{}", hex::encode(cid_bytes)),
     };
     let client = hyper::Client::new();
 
@@ -229,7 +229,7 @@ async fn get_metadata(text: web::Path<String>) -> HttpResponse {
 
     let gio_request = GIORequest {
         domain: METADATA,
-        payload: hex::encode(hash_result),
+        payload: format!("0x{}", hex::encode(hash_result)),
     };
     let client = hyper::Client::new();
 
@@ -254,7 +254,7 @@ async fn get_metadata(text: web::Path<String>) -> HttpResponse {
 
             HttpResponse::Ok()
                 .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
-                .body(hex::decode(gio_response.response).unwrap())
+                .body(hex::decode(gio_response.response[2..].to_string()).unwrap())
         }
         Err(e) => {
             log::error!("failed to handle get_metadata request: {}", e);
@@ -267,7 +267,7 @@ async fn get_metadata(text: web::Path<String>) -> HttpResponse {
 async fn ipfs_put(content: Bytes, cid: web::Path<String>) -> HttpResponse {
     let gio_request = GIORequest {
         domain: EXTERNALIZE_STATE,
-        payload: hex::encode(content),
+        payload: format!("0x{}", hex::encode(content)),
     };
     let client = hyper::Client::new();
 
@@ -292,7 +292,7 @@ async fn ipfs_put(content: Bytes, cid: web::Path<String>) -> HttpResponse {
 
             HttpResponse::Ok()
                 .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
-                .body(hex::decode(gio_response.response).unwrap())
+                .body(hex::decode(gio_response.response[2..].to_string()).unwrap())
         }
         Err(e) => {
             log::error!("failed to handle ipfs_put request: {}", e);
@@ -312,7 +312,7 @@ async fn ipfs_get(cid: web::Path<String>) -> HttpResponse {
     let cid = cid.into_inner();
     let gio_request = GIORequest {
         domain: IPFS_GET_BLOCK,
-        payload: hex::encode(Cid::try_from(cid).unwrap().to_bytes()),
+        payload: format!("0x{}", hex::encode(Cid::try_from(cid).unwrap().to_bytes())),
     };
     let client = hyper::Client::new();
 
@@ -337,7 +337,7 @@ async fn ipfs_get(cid: web::Path<String>) -> HttpResponse {
 
             HttpResponse::Ok()
                 .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
-                .body(hex::decode(gio_response.response).unwrap())
+                .body(hex::decode(gio_response.response[2..].to_string()).unwrap())
         }
         Err(e) => {
             log::error!("failed to handle ipfs_put request: {}", e);
@@ -360,7 +360,7 @@ async fn get_data(path: web::Path<(String, String)>) -> HttpResponse {
 
     let gio_request = GIORequest {
         domain: KECCAK256_NAMESPACE,
-        payload: hex::encode(data_id_as_bytes),
+        payload: format!("0x{}", hex::encode(data_id_as_bytes)),
     };
     let client = hyper::Client::new();
 
