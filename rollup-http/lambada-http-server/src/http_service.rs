@@ -34,6 +34,7 @@ const METADATA: u16 = 0x22;
 const KECCAK256_NAMESPACE: u16 = 0x23;
 const EXTERNALIZE_STATE: u16 = 0x24;
 const IPFS_GET_BLOCK: u16 = 0x25;
+const HINT: u16 = 0x26;
 
 /// Create new instance of http server
 pub fn create_server(config: &Config) -> std::io::Result<actix_server::Server> {
@@ -50,6 +51,8 @@ pub fn create_server(config: &Config) -> std::io::Result<actix_server::Server> {
             .service(ipfs_get)
             .service(ipfs_put)
             .service(ipfs_has)
+            .service(hint)
+            .service(get_app)
     })
     .bind((config.http_address.as_str(), config.http_port))
     .map(|t| t)?
@@ -116,6 +119,64 @@ async fn get_state(key: web::Path<String>) -> HttpResponse {
         .body(result.freeze())
 }
 
+#[actix_web::get("/get_app")]
+async fn get_app() -> HttpResponse {
+    let mut hasher = Sha3_256::new();
+    hasher.update("lambada-app".as_bytes());
+    let hash_result = hasher.finalize();
+    let gio_request = GIORequest {
+        domain: METADATA,
+        payload: format!("0x{}", hex::encode(hash_result)),
+    };
+
+    let client = hyper::Client::new();
+
+    //Request for getting state_cid from rollup_http_server qio request
+    let req = hyper::Request::builder()
+        .method(hyper::Method::POST)
+        .header(hyper::header::CONTENT_TYPE, "application/json")
+        .uri("http://127.0.0.1:5004/gio")
+        .body(hyper::Body::from(
+            serde_json::to_string(&gio_request).unwrap(),
+        ))
+        .expect("gio request");
+    match client.request(req).await {
+        Ok(gio_response) => {
+            let gio_response = serde_json::from_slice::<GIOResponse>(
+                &hyper::body::to_bytes(gio_response)
+                    .await
+                    .expect("error get response from rollup_http_server qio request")
+                    .to_vec(),
+            )
+            .unwrap();
+
+            let endpoint = "http://127.0.0.1:5001".to_string();
+            let cid = Cid::try_from(hex::decode(gio_response.response[2..].to_string()).unwrap()).unwrap();
+
+            // Updates new state using cid received from rollup_http_server qio request
+            let client = IpfsClient::from_str(&endpoint).unwrap();
+
+            client.files_rm("/app", true).await.unwrap();
+            client
+                .files_cp(
+                    &("/ipfs/".to_string() + &cid.to_string()),
+                    "/app",
+                )
+                .await
+                .unwrap();
+
+            HttpResponse::Ok()
+                .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
+                .body(cid.to_string())
+        }
+        Err(e) => {
+            log::error!("failed to handle open_state request: {}", e);
+            HttpResponse::BadRequest().body(format!("Failed to handle open_state request: {}", e))
+        }
+    }
+}
+
+
 // Receives state with a particular key
 #[actix_web::get("/open_state")]
 async fn open_state() -> HttpResponse {
@@ -147,7 +208,7 @@ async fn open_state() -> HttpResponse {
 
             let endpoint = "http://127.0.0.1:5001".to_string();
             let client = IpfsClient::from_str(&endpoint).unwrap();
-            let cid = Cid::try_from(gio_response.response.clone()).unwrap();
+            let cid = Cid::try_from(hex::decode(gio_response.response[2..].to_string()).unwrap()).unwrap();
 
             // Updates new state using cid received from rollup_http_server qio request
             client
@@ -167,7 +228,7 @@ async fn open_state() -> HttpResponse {
 
             HttpResponse::Ok()
                 .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
-                .body(gio_response.response)
+                .body(Vec::new())
         }
         Err(e) => {
             log::error!("failed to handle open_state request: {}", e);
@@ -212,7 +273,7 @@ async fn commit_state() -> HttpResponse {
 
             HttpResponse::Ok()
                 .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
-                .body(gio_response.response)
+                .body(Vec::new())
         }
         Err(e) => {
             log::error!("failed to handle commit_state request: {}", e);
@@ -385,11 +446,51 @@ async fn get_data(path: web::Path<(String, String)>) -> HttpResponse {
 
             HttpResponse::Ok()
                 .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
-                .body(gio_response.response)
+                .body(hex::decode(gio_response.response[2..].to_string()).unwrap())
         }
         Err(e) => {
             log::error!("failed to handle get_data request: {}", e);
             HttpResponse::BadRequest().body(format!("Failed to handle get_data request: {}", e))
         }
     }
+}
+
+#[actix_web::get("/hint/{what}")]
+async fn hint(what: web::Path<String>) -> HttpResponse {
+    let what = what.into_inner();
+    let gio_request = GIORequest {
+        domain: HINT,
+        payload: format!("0x{}", hex::encode(what)),
+    };
+    let client = hyper::Client::new();
+
+    let req = hyper::Request::builder()
+        .method(hyper::Method::POST)
+        .header(hyper::header::CONTENT_TYPE, "application/json")
+        .uri("http://127.0.0.1:5004/gio")
+        .body(hyper::Body::from(
+            serde_json::to_string(&gio_request).unwrap(),
+        ))
+        .expect("gio request");
+
+    match client.request(req).await {
+        Ok(gio_response) => {
+            let gio_response = serde_json::from_slice::<GIOResponse>(
+                &hyper::body::to_bytes(gio_response)
+                    .await
+                    .expect("error get response from rollup_http_server gio request")
+                    .to_vec(),
+            )
+            .unwrap();
+
+            HttpResponse::Ok()
+                .append_header((hyper::header::CONTENT_TYPE, "application/octet-stream"))
+                .body(hex::decode(gio_response.response[2..].to_string()).unwrap())
+        }
+        Err(e) => {
+            log::error!("failed to handle hint request: {}", e);
+            HttpResponse::BadRequest().body(format!("Failed to handle hint request: {}", e))
+        }
+    }
+    
 }
