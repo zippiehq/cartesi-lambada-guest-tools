@@ -162,6 +162,19 @@ COPY --chown=developer:developer rollup-http/echo-dapp/src ${BUILD_BASE}/tools/r
 RUN cd ${BUILD_BASE}/tools/rollup-http/echo-dapp && touch src/* && \
     cargo build --target riscv64gc-unknown-linux-gnu --release
 
+FROM golang:1.21 as kubo-build
+RUN apt-get update && apt-get install -y llvm libgpgme-dev libassuan-dev libbtrfs-dev libdevmapper-dev pkg-config
+WORKDIR /app
+
+RUN git clone https://github.com/zippiehq/cartesi-kubo -b ipfs-cartesi kubo && cd kubo && git checkout a9042bef91cf09f140bbf38034dca486d752d3f8
+
+WORKDIR /app/kubo
+RUN go mod download
+COPY ./sys_linux_riscv64.go /go/pkg/mod/github.com/marten-seemann/tcp\@v0.0.0-20210406111302-dfbc87cc63fd/sys_linux_riscv64.go
+RUN GOOS=linux GOARCH=riscv64 CGO_ENABLED=0 GOFLAGS="-ldflags=-s-w -trimpath" make nofuse IPFS_PLUGINS="ds_http"
+RUN llvm-strip -s /app/kubo/cmd/ipfs/ipfs
+
+
 # pack tools (deb)
 # ------------------------------------------------------------------------------
 FROM tools-env as packer
@@ -183,9 +196,12 @@ COPY --from=c-builder ${BUILD_BASE}/tools/sys-utils/yield/yield ${STAGING_SBIN}
 COPY --from=c-builder ${BUILD_BASE}/tools/sys-utils/hex/hex ${STAGING_SBIN}
 COPY --from=c-builder ${BUILD_BASE}/tools/sys-utils/rollup/rollup ${STAGING_SBIN}
 COPY --from=c-builder ${BUILD_BASE}/tools/sys-utils/ioctl-echo-loop/ioctl-echo-loop ${STAGING_BIN}
+COPY --from=kubo-build /app/kubo/cmd/ipfs/ipfs ${STAGING_BIN}/ipfs
+COPY ipfs-config ${staging_base}/etc/ipfs-config
 COPY --from=c-builder ${BUILD_BASE}/tools/sys-utils/yield/yield ${STAGING_SBIN}
 COPY --from=c-builder ${BUILD_BASE}/tools/sys-utils/misc/* ${STAGING_BIN}
 COPY --from=rust-builder ${BUILD_BASE}/tools/rollup-http/rollup-init/rollup-init ${STAGING_SBIN}
+COPY --from=rust-builder ${BUILD_BASE}/tools/rollup-http/rollup-init/lambada-init ${STAGING_SBIN}
 COPY --from=http-server-builder ${BUILD_BASE}/tools/rollup-http/rollup-http-server/target/riscv64gc-unknown-linux-gnu/release/rollup-http-server ${STAGING_BIN}
 COPY --from=lambada-server-builder ${BUILD_BASE}/tools/rollup-http/lambada-http-server/target/riscv64gc-unknown-linux-gnu/release/lambada-http-server ${STAGING_BIN}
 COPY --from=echo-dapp-builder ${BUILD_BASE}/tools/rollup-http/echo-dapp/target/riscv64gc-unknown-linux-gnu/release/echo-dapp ${STAGING_BIN}
