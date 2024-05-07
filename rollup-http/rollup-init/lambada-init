@@ -25,10 +25,10 @@ IPFS_HOST="127.0.0.1"
 IPFS_PORT="5001"
 
 while true; do
-	nc -z "\$IPFS_HOST" "\$IPFS_PORT"
-        RET=\$?
-        echo \$RET
-        if [ x\$RET = x0 ]; then
+	nc "$IPFS_HOST" "$IPFS_PORT" < /dev/null
+        RET=$?
+        echo $RET
+        if [ x$RET = x0 ]; then
            break
         fi
         sleep 1

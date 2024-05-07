@@ -197,7 +197,7 @@ COPY --from=c-builder ${BUILD_BASE}/tools/sys-utils/hex/hex ${STAGING_SBIN}
 COPY --from=c-builder ${BUILD_BASE}/tools/sys-utils/rollup/rollup ${STAGING_SBIN}
 COPY --from=c-builder ${BUILD_BASE}/tools/sys-utils/ioctl-echo-loop/ioctl-echo-loop ${STAGING_BIN}
 COPY --from=kubo-build /app/kubo/cmd/ipfs/ipfs ${STAGING_BIN}/ipfs
-COPY ipfs-config ${staging_base}/etc/ipfs-config
+COPY ipfs-config ${STAGING_BASE}/etc/ipfs-config
 COPY --from=c-builder ${BUILD_BASE}/tools/sys-utils/yield/yield ${STAGING_SBIN}
 COPY --from=c-builder ${BUILD_BASE}/tools/sys-utils/misc/* ${STAGING_BIN}
 COPY --from=rust-builder ${BUILD_BASE}/tools/rollup-http/rollup-init/rollup-init ${STAGING_SBIN}
