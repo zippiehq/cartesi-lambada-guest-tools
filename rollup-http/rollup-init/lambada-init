@@ -34,4 +34,4 @@ while true; do
 done
 echo "IPFS up"
 
-/usr/bin/lambada-http-server $*
+$*

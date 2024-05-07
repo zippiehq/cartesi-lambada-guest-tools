@@ -16,7 +16,7 @@
 
 MAJOR := 0
 MINOR := 15
-PATCH := 5
+PATCH := 6
 LABEL :=
 VERSION := $(MAJOR).$(MINOR).$(PATCH)$(LABEL)
 
