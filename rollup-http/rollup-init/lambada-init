@@ -16,7 +16,6 @@
 # limitations under the License.
 #
 
-export IPFS_PATH=/root/.ipfs
 export HTTP_DATASTORE_URL=http://127.0.0.1:5005/ipfs
 /usr/bin/ipfs init /etc/ipfs-config
 /usr/bin/ipfs daemon --offline &
