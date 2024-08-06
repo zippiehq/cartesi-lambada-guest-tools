@@ -72,7 +72,7 @@ pub async fn run(config: &Config, server_ready: Arc<Notify>) -> std::io::Result<
 #[actix_web::delete("/delete_state/{key}")]
 async fn delete_state(key: web::Path<String>) -> HttpResponse {
     let client = IpfsClient::from_str("http://127.0.0.1:5001").unwrap();
-    let key_path = format!("/state/kv/{}", key.into_inner());
+    let key_path = format!("/state/{}", key.into_inner());
     match client.files_rm(&key_path, true).await {
         Ok(_) => HttpResponse::Ok().finish(),
         Err(_) => HttpResponse::InternalServerError().finish(),
@@ -83,7 +83,7 @@ async fn delete_state(key: web::Path<String>) -> HttpResponse {
 #[actix_web::post("/set_state/{key}")]
 async fn set_state(key: web::Path<String>, body: Bytes) -> HttpResponse {
     let client = IpfsClient::from_str("http://127.0.0.1:5001").unwrap();
-    let base_path = "/state/kv";
+    let base_path = "/state";
     let _ = client.files_mkdir(base_path, true).await;
     let key_path = format!("{}/{}", base_path, key.into_inner());
 
@@ -99,7 +99,7 @@ async fn set_state(key: web::Path<String>, body: Bytes) -> HttpResponse {
 #[actix_web::get("/get_state/{key}")]
 async fn get_state(key: web::Path<String>) -> HttpResponse {
     let client = IpfsClient::from_str("http://127.0.0.1:5001").unwrap();
-    let key_path = format!("/state/kv/{}", key.into_inner());
+    let key_path = format!("/state/{}", key.into_inner());
 
     let stream = client.files_read(&key_path);
     let result = stream
@@ -151,17 +151,15 @@ async fn get_app() -> HttpResponse {
             .unwrap();
 
             let endpoint = "http://127.0.0.1:5001".to_string();
-            let cid = Cid::try_from(hex::decode(gio_response.response[2..].to_string()).unwrap()).unwrap();
+            let cid = Cid::try_from(hex::decode(gio_response.response[2..].to_string()).unwrap())
+                .unwrap();
 
             // Updates new state using cid received from rollup_http_server qio request
             let client = IpfsClient::from_str(&endpoint).unwrap();
 
             client.files_rm("/app", true).await.unwrap();
             client
-                .files_cp(
-                    &("/ipfs/".to_string() + &cid.to_string()),
-                    "/app",
-                )
+                .files_cp(&("/ipfs/".to_string() + &cid.to_string()), "/app")
                 .await
                 .unwrap();
 
@@ -175,7 +173,6 @@ async fn get_app() -> HttpResponse {
         }
     }
 }
-
 
 // Receives state with a particular key
 #[actix_web::get("/open_state")]
@@ -208,7 +205,8 @@ async fn open_state() -> HttpResponse {
 
             let endpoint = "http://127.0.0.1:5001".to_string();
             let client = IpfsClient::from_str(&endpoint).unwrap();
-            let cid = Cid::try_from(hex::decode(gio_response.response[2..].to_string()).unwrap()).unwrap();
+            let cid = Cid::try_from(hex::decode(gio_response.response[2..].to_string()).unwrap())
+                .unwrap();
 
             // Updates new state using cid received from rollup_http_server qio request
             client
@@ -360,7 +358,6 @@ async fn ipfs_put(content: Bytes, cid: web::Path<String>) -> HttpResponse {
             HttpResponse::BadRequest().body(format!("Failed to handle ipfs_put request: {}", e))
         }
     }
-    
 }
 
 #[actix_web::head("/ipfs/has/{cid}")]
@@ -405,7 +402,6 @@ async fn ipfs_get(cid: web::Path<String>) -> HttpResponse {
             HttpResponse::BadRequest().body(format!("Failed to handle ipfs_put request: {}", e))
         }
     }
-    
 }
 
 #[actix_web::get("/get_data/{namespace}/{data_id}")]
@@ -492,5 +488,4 @@ async fn hint(what: web::Path<String>) -> HttpResponse {
             HttpResponse::BadRequest().body(format!("Failed to handle hint request: {}", e))
         }
     }
-    
 }
