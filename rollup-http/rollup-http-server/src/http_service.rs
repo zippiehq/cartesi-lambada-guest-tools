@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use actix_web::{middleware::Logger, web::Data, App, HttpResponse, HttpServer};
+use actix_web::{middleware::Logger, web::{Data, JsonConfig}, App, HttpResponse, HttpServer};
 use actix_web_validator::Json;
 use async_mutex::Mutex;
 use serde::{Deserialize, Serialize};
@@ -48,8 +48,10 @@ pub fn create_server(
         let data = Data::new(Mutex::new(Context {
             rollup_fd: rollup_fd.clone(),
         }));
+        let json_cfg = JsonConfig::default().limit(5242880);
         App::new()
             .app_data(data)
+            .app_data(json_cfg)
             .wrap(Logger::default())
             .service(voucher)
             .service(notice)
