@@ -16,8 +16,8 @@
 
 use std::sync::Arc;
 
-use actix_web::{middleware::Logger, web::{Data, JsonConfig}, App, HttpResponse, HttpServer};
-use actix_web_validator::Json;
+use actix_web::{middleware::Logger, web::Data, App, HttpResponse, HttpServer};
+use actix_web_validator::{Json, JsonConfig};
 use async_mutex::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
